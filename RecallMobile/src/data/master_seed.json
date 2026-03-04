@@ -1,0 +1,12 @@
+[
+  { "uid": "sku_0001", "name": "Sugar 1kg", "native": "સાકર / Sakhar", "aliases": ["khand", "sakar", "sakhar", "sugar", "shakar"] },
+  { "uid": "sku_0002", "name": "Wheat 1kg", "native": "ઘઉં / Ghau", "aliases": ["wheat", "ghau", "gehu", "gahum"] },
+  { "uid": "sku_0003", "name": "Tata Salt 1kg", "native": "टाटा मीठ / Tata Mith", "aliases": ["salt", "tata salt", "mith", "namak"] },
+  { "uid": "sku_0004", "name": "Aashirvaad Atta 5kg", "native": "आशीर्वाद आटा", "aliases": ["atta", "flour", "aashirvaad", "pithe"] },
+  { "uid": "sku_0005", "name": "India Gate Basmati Rice 1kg", "native": "बासमती तांदूळ", "aliases": ["rice", "basmati", "taandul", "chawal"] },
+  { "uid": "sku_0006", "name": "Toor Dal 1kg", "native": "तूर डाळ", "aliases": ["dal", "toor dal", "tuvar", "daal"] },
+  { "uid": "sku_0007", "name": "Maggi Noodles 70g", "native": "मॅगी नूडल्स", "aliases": ["maggi", "noodles", "magi"] },
+  { "uid": "sku_0008", "name": "Parle-G Biscuits 80g", "native": "पार्ले-जी", "aliases": ["parle", "biscuit", "parle g"] },
+  { "uid": "sku_0009", "name": "Brooke Bond Red Label 500g", "native": "रेड लेबल चहा", "aliases": ["tea", "chai", "red label", "patti"] },
+  { "uid": "sku_0010", "name": "Lifebuoy Soap 100g", "native": "लाइफबॉय साबण", "aliases": ["soap", "lifebuoy", "saban", "sabun"] }
+]

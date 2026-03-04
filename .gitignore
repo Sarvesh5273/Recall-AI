@@ -1,0 +1,33 @@
+# Environment - NEVER commit these
+.env
+.env.local
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+env/
+
+# React Native
+node_modules/
+.expo/
+android/
+ios/
+*.keystore
+!debug.keystore
+
+# Build outputs
+/build
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/RecallMobile/vendor/
