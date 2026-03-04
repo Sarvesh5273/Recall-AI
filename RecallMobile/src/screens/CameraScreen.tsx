@@ -9,6 +9,7 @@ import NetInfo from '@react-native-community/netinfo'; // THE NETWORK CONTEXT EN
 // Local database engine 
 import { database } from '../database';
 import PendingScan from '../database/PendingScan';
+import { processOutboxQueue } from '../utils/SyncWorker';
 
 export default function CameraScreen({ route, navigation }: any) {
   const { type } = route.params || { type: 'OUT' }; 
@@ -57,7 +58,10 @@ export default function CameraScreen({ route, navigation }: any) {
         });
       });
 
-      // 3. CONTEXT-AWARE UX FEEDBACK
+      // 3. IMMEDIATELY KICK THE SYNC ENGINE (fire & forget — don't await)
+      processOutboxQueue();
+
+      // 4. CONTEXT-AWARE UX FEEDBACK
       const netState = await NetInfo.fetch();
       const isOnline = netState.isConnected && netState.isInternetReachable !== false;
 

@@ -4,6 +4,7 @@ import os
 import httpx
 import json
 import uuid
+import time
 from datetime import datetime, timezone
 from openai import AzureOpenAI
 from dotenv import load_dotenv
@@ -33,11 +34,12 @@ blob_container_client = blob_service_client.get_container_client(CONTAINER_NAME)
 app = FastAPI(title="Recall AI Enterprise Engine", version="4.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-MASTER_DICTIONARY = {
-    "item_001": {"en": "Sugar", "aliases": ["ખાંડ", "khand", "sakar", "sakhar", "sugar", "shakar"]},
-    "item_002": {"en": "Rice",  "aliases": ["ચોખા", "chokha", "rice", "taandul", "chawal"]},
-    "item_003": {"en": "Wheat", "aliases": ["ઘઉં", "ghau", "wheat", "gehu", "gahum"]}
-}
+# Load master catalog from file — edit master_catalog.json to add new items, never touch this file
+_catalog_path = os.path.join(os.path.dirname(__file__), "master_catalog.json")
+with open(_catalog_path, "r", encoding="utf-8") as f:
+    _catalog_list = json.load(f)
+
+MASTER_DICTIONARY = {item["uid"]: {"en": item["en"], "aliases": item["aliases"]} for item in _catalog_list}
 ALL_ALIASES = [alias for item in MASTER_DICTIONARY.values() for alias in item["aliases"]]
 
 def sort_extracted_item(raw_ai_text: str):
@@ -91,22 +93,49 @@ async def process_ledger(
     try:
         files = {"file": (file.filename, image_bytes, file.content_type)}
         async with httpx.AsyncClient() as client:
-            response = await client.post(SARVAM_API_URL, headers=SARVAM_HEADERS, files=files, data={"prompt_type": "default_ocr"}, timeout=20.0)
+            t_sarvam = time.time()
+            response = await client.post(SARVAM_API_URL, headers=SARVAM_HEADERS, files=files, data={"prompt_type": "default_ocr"}, timeout=45.0)
+            print(f"⏱ Sarvam OCR: {time.time()-t_sarvam:.2f}s")
         if response.status_code != 200: raise HTTPException(status_code=500, detail="Sarvam Failed")
         
         raw_markdown = response.json().get("message", response.json().get("text", str(response.json())))
         
+        t_gpt = time.time()
         gpt_response = azure_ai_client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "You output only valid JSON containing an 'items' array."}, {"role": "user", "content": f"Convert OCR to strict JSON array 'items' (raw_name, quantity, unit): {raw_markdown}"}],
-            response_format={ "type": "json_object" }, temperature=0.1 
+            messages=[
+                {"role": "system", "content": """You output only valid JSON containing an 'items' array.
+Each item must have: raw_name (string), quantity (number), unit (string).
+Rules for unit normalization — always use these exact unit strings:
+- Weight: use 'kg' for kilograms, 'g' for grams
+- Volume: use 'L' for litres, 'ml' for millilitres  
+- Count: use 'pcs' for pieces, packets, units, nos, numbers
+- If unit is ambiguous or missing: use 'pcs'
+Never use: 'units', 'packets', 'nos', 'numbers', 'packet' — convert them to 'pcs'.
+Never use: 'litre', 'liter', 'ltr' — convert to 'L'.
+Never use: 'kilogram', 'kilo' — convert to 'kg'.
+If the same item appears multiple times with the same unit, sum the quantities and return it once."""},
+                {"role": "user", "content": f"Convert this OCR text to JSON array 'items': {raw_markdown}"}
+            ],
+            response_format={"type": "json_object"}, temperature=0.1
         )
-        structured_items = json.loads(gpt_response.choices[0].message.content).get("items", [])
+        print(f"⏱ GPT-4o-mini: {time.time()-t_gpt:.2f}s")
+        try:
+            structured_items = json.loads(gpt_response.choices[0].message.content).get("items", [])
+            if not isinstance(structured_items, list):
+                structured_items = []
+        except (json.JSONDecodeError, AttributeError) as parse_err:
+            print(f"⚠️ GPT parse error: {parse_err} — raw: {gpt_response.choices[0].message.content}")
+            structured_items = []
+        print(f"📦 Extracted {len(structured_items)} items: {structured_items}")
         
         custom_items_query = "SELECT c.uid, c.standard_name FROM c WHERE c.shop_id = @shop AND STARTSWITH(c.uid, 'custom_') AND c.status = 'active' AND c.type = 'inventory'"
         custom_items = list(container.query_items(query=custom_items_query, parameters=[{"name": "@shop", "value": shop_id}], enable_cross_partition_query=True))
         
         results = {"clean_inventory": [], "quarantined": []}
+        # Track UIDs already processed in this scan batch
+        # Prevents double-counting when same item appears twice on one ledger
+        processed_in_batch: dict = {}  # uid → unit already seen this scan
 
         for item in structured_items:
             raw_name = str(item.get("raw_name", ""))
@@ -128,14 +157,74 @@ async def process_ledger(
                                 uid_to_update, standard_name_to_use = ci["uid"], ci["standard_name"]
                                 break
 
+            # --- IN-BATCH DEDUPLICATION ---
+            # If same UID already processed in this scan with same unit → merge qty
+            # If same UID but different unit → quarantine the duplicate
+            if uid_to_update:
+                if uid_to_update in processed_in_batch:
+                    prev_unit = processed_in_batch[uid_to_update]
+                    if prev_unit == unit.lower().strip():
+                        # Same item, same unit — merge into previous entry, skip this one
+                        print(f"⚠️ Dedup: '{raw_name}' already processed this batch, merging qty")
+                        # Update the already-queued qty by patching the Cosmos record again
+                        # Just quarantine with a note — safer than double-patching
+                        results["quarantined"].append({
+                            "id": str(uuid.uuid4()),
+                            "shop_id": shop_id,
+                            "raw_text": raw_name,
+                            "quantity": qty,
+                            "unit": unit,
+                            "scan_type": scan_type,
+                            "status": "needs_review",
+                            "confidence_score": sort_result["confidence_score"] if sort_result else 0,
+                            "quarantine_reason": f"Duplicate in same ledger — verify manually"
+                        })
+                        continue
+                    else:
+                        # Same item, different unit — quarantine
+                        results["quarantined"].append({
+                            "id": str(uuid.uuid4()),
+                            "shop_id": shop_id,
+                            "raw_text": raw_name,
+                            "quantity": qty,
+                            "unit": unit,
+                            "scan_type": scan_type,
+                            "status": "needs_review",
+                            "confidence_score": sort_result["confidence_score"] if sort_result else 0,
+                            "quarantine_reason": f"Unit mismatch in same ledger: '{prev_unit}' vs '{unit}'"
+                        })
+                        continue
+                else:
+                    processed_in_batch[uid_to_update] = unit.lower().strip()
+
             # --- 5. ATOMIC PATCHES (No more Race Conditions) ---
             if uid_to_update:
-                query = "SELECT c.id FROM c WHERE c.shop_id = @shop AND c.uid = @uid AND c.status = 'active' AND c.type = 'inventory'"
+                query = "SELECT c.id, c.unit FROM c WHERE c.shop_id = @shop AND c.uid = @uid AND c.status = 'active' AND c.type = 'inventory'"
                 existing_items = list(container.query_items(query=query, parameters=[{"name": "@shop", "value": shop_id}, {"name": "@uid", "value": uid_to_update}], enable_cross_partition_query=True))
 
                 if existing_items:
+                    # --- UNIT MISMATCH GUARD ---
+                    # If item exists but unit is different (e.g. "ml" vs "units"),
+                    # don't blindly add up — send to quarantine for human review
+                    stored_unit = existing_items[0].get("unit", "").lower().strip()
+                    incoming_unit = unit.lower().strip()
+                    unit_mismatch = stored_unit and incoming_unit and stored_unit != incoming_unit
+
+                    if unit_mismatch:
+                        results["quarantined"].append({
+                            "id": str(uuid.uuid4()),
+                            "shop_id": shop_id,
+                            "raw_text": raw_name,
+                            "quantity": qty,
+                            "unit": unit,
+                            "scan_type": scan_type,
+                            "status": "needs_review",
+                            "confidence_score": sort_result["confidence_score"] if sort_result else 0,
+                            "quarantine_reason": f"Unit mismatch: stored as '{stored_unit}', scanned as '{incoming_unit}'"
+                        })
+                        continue
+
                     doc_id = existing_items[0]['id']
-                    # Mathematical operation processed safely inside the database engine
                     container.patch_item(
                         item=doc_id,
                         partition_key=shop_id,
@@ -170,7 +259,14 @@ async def process_ledger(
         print(f"Pipeline Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-class MappedItemPayload(BaseModel): shop_id: str; uid: str; standard_name: str; quantity: float; unit: str; scan_type: str
+class MappedItemPayload(BaseModel): 
+    shop_id: str
+    uid: str
+    standard_name: str
+    quantity: float
+    unit: str
+    scan_type: str
+    raw_text: str = ""  # what OCR originally read — used for training signal
 
 @app.post("/sync-mapped-item")
 def sync_mapped_item(payload: MappedItemPayload):
@@ -183,7 +279,6 @@ def sync_mapped_item(payload: MappedItemPayload):
 
         if existing_items:
             doc_id = existing_items[0]['id']
-            # Atomic Patch for manual sync mappings
             container.patch_item(
                 item=doc_id, partition_key=payload.shop_id,
                 patch_operations=[
@@ -191,13 +286,154 @@ def sync_mapped_item(payload: MappedItemPayload):
                     {'op': 'replace', 'path': '/last_updated', 'value': datetime.now(timezone.utc).isoformat()}
                 ]
             )
-            return {"status": "success", "message": "Patched"}
         else:
             new_item = {"id": str(uuid.uuid4()), "shop_id": payload.shop_id, "uid": payload.uid, "standard_name": payload.standard_name, "quantity": qty_math, "unit": payload.unit, "status": "active", "type": "inventory", "last_updated": datetime.now(timezone.utc).isoformat()}
             container.create_item(body=new_item)
-            return {"status": "success", "message": "Created"}
+
+        # ── TRAINING SIGNAL ──────────────────────────────────────────────────
+        # Every manual mapping = one labeled OCR training example
+        # raw_text is what OCR extracted, standard_name is what owner corrected it to
+        # This data trains future matching models — never delete these records
+        if payload.raw_text and payload.raw_text.strip() and payload.raw_text.strip().lower() != payload.standard_name.strip().lower():
+            try:
+                container.create_item(body={
+                    "id": str(uuid.uuid4()),
+                    "type": "training_signal",
+                    "shop_id": payload.shop_id,
+                    "raw_ocr": payload.raw_text.strip(),
+                    "mapped_to": payload.standard_name.strip(),
+                    "mapped_uid": payload.uid,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
+                print(f"🧠 Training signal saved: '{payload.raw_text}' → '{payload.standard_name}'")
+            except Exception as te:
+                print(f"Training signal write failed (non-critical): {te}")
+        # ────────────────────────────────────────────────────────────────────
+
+        return {"status": "success", "message": "Synced"}
+
     except Exception as e:
+        print(f"Sync mapped item error: {e}")
         raise HTTPException(status_code=500, detail="Sync failed.")
+
+class CustomItemPayload(BaseModel): shop_id: str; custom_name: str; quantity: float; unit: str; scan_type: str
+
+@app.post("/create-custom-item")
+def create_custom_item(payload: CustomItemPayload):
+    try:
+        container = db.get_container()
+
+        # 1. Generate a stable custom UID based on name (so duplicates don't get created)
+        safe_name = payload.custom_name.strip().lower().replace(" ", "_")
+        custom_uid = f"custom_{safe_name}_{uuid.uuid4().hex[:6]}"
+
+        qty_math = payload.quantity if payload.scan_type == "IN" else -payload.quantity
+
+        # 2. Check if a custom item with this name already exists for this shop
+        existing_query = "SELECT c.id, c.uid FROM c WHERE c.shop_id = @shop AND c.standard_name = @name AND STARTSWITH(c.uid, 'custom_') AND c.status = 'active' AND c.type = 'inventory'"
+        existing = list(container.query_items(
+            query=existing_query,
+            parameters=[
+                {"name": "@shop", "value": payload.shop_id},
+                {"name": "@name", "value": payload.custom_name.strip()}
+            ],
+            enable_cross_partition_query=True
+        ))
+
+        if existing:
+            # Item already exists — just patch quantity
+            doc_id = existing[0]['id']
+            custom_uid = existing[0]['uid']
+            container.patch_item(
+                item=doc_id,
+                partition_key=payload.shop_id,
+                patch_operations=[
+                    {'op': 'incr', 'path': '/quantity', 'value': qty_math},
+                    {'op': 'replace', 'path': '/last_updated', 'value': datetime.now(timezone.utc).isoformat()}
+                ]
+            )
+            return {
+                "status": "success",
+                "message": "Patched existing custom item",
+                "data": {"uid": custom_uid, "standard_name": payload.custom_name.strip()}
+            }
+
+        # 3. Create brand new custom item
+        new_item = {
+            "id": str(uuid.uuid4()),
+            "shop_id": payload.shop_id,
+            "uid": custom_uid,
+            "standard_name": payload.custom_name.strip(),
+            "quantity": qty_math,
+            "unit": payload.unit,
+            "status": "active",
+            "type": "inventory",
+            "last_updated": datetime.now(timezone.utc).isoformat()
+        }
+        container.create_item(body=new_item)
+
+        return {
+            "status": "success",
+            "message": "Custom item created",
+            "data": {"uid": custom_uid, "standard_name": payload.custom_name.strip()}
+        }
+
+    except Exception as e:
+        print(f"Custom Item Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create custom item.")
+
+
+class AdjustInventoryPayload(BaseModel): shop_id: str; uid: str; new_quantity: float
+
+@app.post("/adjust-inventory")
+def adjust_inventory(payload: AdjustInventoryPayload):
+    try:
+        container = db.get_container()
+
+        query = "SELECT c.id FROM c WHERE c.shop_id = @shop AND c.uid = @uid AND c.status = 'active' AND c.type = 'inventory'"
+        existing = list(container.query_items(
+            query=query,
+            parameters=[
+                {"name": "@shop", "value": payload.shop_id},
+                {"name": "@uid", "value": payload.uid}
+            ],
+            enable_cross_partition_query=True
+        ))
+
+        if not existing:
+            raise HTTPException(status_code=404, detail="Item not found in inventory.")
+
+        doc_id = existing[0]['id']
+        container.patch_item(
+            item=doc_id,
+            partition_key=payload.shop_id,
+            patch_operations=[
+                {'op': 'replace', 'path': '/quantity', 'value': payload.new_quantity},
+                {'op': 'replace', 'path': '/last_updated', 'value': datetime.now(timezone.utc).isoformat()}
+            ]
+        )
+        return {"status": "success", "message": f"Quantity updated to {payload.new_quantity}"}
+
+    except HTTPException as e: raise e
+    except Exception as e:
+        print(f"Adjust Inventory Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to adjust inventory.")
+
+
+@app.get("/sync-custom-dictionary")
+def sync_custom_dictionary(shop_id: str = Query("shop_10065")):
+    try:
+        container = db.get_container()
+        query = "SELECT c.uid, c.standard_name FROM c WHERE c.shop_id = @shop AND STARTSWITH(c.uid, 'custom_') AND c.status = 'active' AND c.type = 'inventory'"
+        items = list(container.query_items(
+            query=query,
+            parameters=[{"name": "@shop", "value": shop_id}],
+            enable_cross_partition_query=True
+        ))
+        return {"status": "success", "data": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to fetch custom dictionary.")
+
 
 # Ensure /inventory and other endpoints use AND c.type = 'inventory'
 @app.get("/inventory")

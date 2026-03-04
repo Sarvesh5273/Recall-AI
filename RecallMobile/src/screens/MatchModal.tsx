@@ -73,7 +73,8 @@ export default function MatchModal({ route, navigation }: any) {
         standard_name: masterItem.name,
         quantity: finalQuantity, 
         unit: unit,
-        scan_type: quarantineRecord.scanType || "IN"
+        scan_type: quarantineRecord.scanType || "IN",
+        raw_text: rawText  // ← training signal: what OCR originally read
       };
 
       const response = await fetch(`${API_BASE_URL}/sync-mapped-item`, {
