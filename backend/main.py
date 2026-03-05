@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import httpx
@@ -12,6 +12,7 @@ from azure.storage.blob import BlobServiceClient
 from thefuzz import process
 from pydantic import BaseModel
 from database import db
+from auth import router as auth_router, get_current_shop
 
 # 1. Environment Initialization
 load_dotenv() 
@@ -31,8 +32,12 @@ azure_ai_client = AzureOpenAI(
 blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
 blob_container_client = blob_service_client.get_container_client(CONTAINER_NAME)
 
-app = FastAPI(title="Recall AI Enterprise Engine", version="4.0.0")
+app = FastAPI(title="Recall AI Enterprise Engine", version="5.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+# TODO: Lock CORS to app domain post-deployment: allow_origins=["https://your-domain.com"]
+
+# Register auth routes
+app.include_router(auth_router)
 
 # Load master catalog from file — edit master_catalog.json to add new items, never touch this file
 _catalog_path = os.path.join(os.path.dirname(__file__), "master_catalog.json")
@@ -45,7 +50,7 @@ ALL_ALIASES = [alias for item in MASTER_DICTIONARY.values() for alias in item["a
 def sort_extracted_item(raw_ai_text: str):
     if not raw_ai_text: return {"routing": "QUARANTINE_INBOX", "raw_text": "Unknown", "confidence_score": 0}
     best_match, score = process.extractOne(raw_ai_text.lower(), ALL_ALIASES)
-    if score >= 85:
+    if score >= 88:
         for uid, data in MASTER_DICTIONARY.items():
             if best_match in data["aliases"]: return {"routing": "CLEAN_INVENTORY", "uid": uid, "standard_name": data["en"], "confidence_score": score}
     return {"routing": "QUARANTINE_INBOX", "raw_text": raw_ai_text, "confidence_score": score}
@@ -58,10 +63,11 @@ def safe_float(value, default=1.0):
 @app.post("/process-ledger")
 async def process_ledger(
     file: UploadFile = File(...), 
-    shop_id: str = Form("shop_10065"), 
     scan_type: str = Form("IN"),
-    scan_id: str = Form(None) # Added Idempotency Key
+    scan_id: str = Form(None),
+    current_shop: dict = Depends(get_current_shop)
 ):
+    shop_id = current_shop["shop_id"]
     container = db.get_container()
     
     # --- 1. BACKEND IDEMPOTENCY GATEKEEPER ---
@@ -243,7 +249,13 @@ If the same item appears multiple times with the same unit, sum the quantities a
 
         # --- 6. RECORD IDEMPOTENCY & USAGE ---
         if scan_id:
-            container.create_item(body={"id": scan_id, "shop_id": shop_id, "type": "processed_scan", "timestamp": datetime.now(timezone.utc).isoformat()})
+            container.create_item(body={
+                "id": scan_id,
+                "shop_id": shop_id,
+                "type": "processed_scan",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "ttl": 172800  # auto-delete after 48 hours — overrides container TTL
+            })
 
         if usage_records:
             full_doc = list(container.query_items(query="SELECT * FROM c WHERE c.id = @usage_id AND c.type = 'usage'", parameters=[{"name": "@usage_id", "value": usage_doc_id}], enable_cross_partition_query=True))[0]
@@ -269,7 +281,9 @@ class MappedItemPayload(BaseModel):
     raw_text: str = ""  # what OCR originally read — used for training signal
 
 @app.post("/sync-mapped-item")
-def sync_mapped_item(payload: MappedItemPayload):
+def sync_mapped_item(payload: MappedItemPayload, current_shop: dict = Depends(get_current_shop)):
+    if payload.shop_id != current_shop["shop_id"]:
+        raise HTTPException(status_code=403, detail="Shop ID mismatch.")
     try:
         container = db.get_container()
         qty_math = payload.quantity if payload.scan_type == "IN" else -payload.quantity
@@ -319,7 +333,9 @@ def sync_mapped_item(payload: MappedItemPayload):
 class CustomItemPayload(BaseModel): shop_id: str; custom_name: str; quantity: float; unit: str; scan_type: str
 
 @app.post("/create-custom-item")
-def create_custom_item(payload: CustomItemPayload):
+def create_custom_item(payload: CustomItemPayload, current_shop: dict = Depends(get_current_shop)):
+    if payload.shop_id != current_shop["shop_id"]:
+        raise HTTPException(status_code=403, detail="Shop ID mismatch.")
     try:
         container = db.get_container()
 
@@ -386,7 +402,9 @@ def create_custom_item(payload: CustomItemPayload):
 class AdjustInventoryPayload(BaseModel): shop_id: str; uid: str; new_quantity: float
 
 @app.post("/adjust-inventory")
-def adjust_inventory(payload: AdjustInventoryPayload):
+def adjust_inventory(payload: AdjustInventoryPayload, current_shop: dict = Depends(get_current_shop)):
+    if payload.shop_id != current_shop["shop_id"]:
+        raise HTTPException(status_code=403, detail="Shop ID mismatch.")
     try:
         container = db.get_container()
 
@@ -421,7 +439,8 @@ def adjust_inventory(payload: AdjustInventoryPayload):
 
 
 @app.get("/sync-custom-dictionary")
-def sync_custom_dictionary(shop_id: str = Query("shop_10065")):
+def sync_custom_dictionary(current_shop: dict = Depends(get_current_shop)):
+    shop_id = current_shop["shop_id"]
     try:
         container = db.get_container()
         query = "SELECT c.uid, c.standard_name FROM c WHERE c.shop_id = @shop AND STARTSWITH(c.uid, 'custom_') AND c.status = 'active' AND c.type = 'inventory'"
@@ -445,3 +464,53 @@ def get_inventory(shop_id: str = Query("shop_10065")):
         return {"status": "success", "total_items": len(items), "data": sorted(items, key=lambda x: x["standard_name"].lower())}
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to fetch.")
+
+# ── ANALYTICS ENDPOINT ────────────────────────────────────────────────────────
+# Thomas asked: "Can you see monthly active users on your app?"
+# This endpoint powers the admin dashboard
+@app.get("/analytics")
+def get_analytics(month: str = Query(None)):
+    try:
+        container = db.get_container()
+        current_month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+
+        # 1. Monthly Active Shops (unique shop_ids with scans this month)
+        mau_query = "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'usage' AND c.month = @month"
+        mau = list(container.query_items(query=mau_query, parameters=[{"name": "@month", "value": current_month}], enable_cross_partition_query=True))
+        active_shops = mau[0] if mau else 0
+
+        # 2. Total scans this month across all shops
+        scans_query = "SELECT VALUE SUM(c.scans_this_month) FROM c WHERE c.type = 'usage' AND c.month = @month"
+        scans = list(container.query_items(query=scans_query, parameters=[{"name": "@month", "value": current_month}], enable_cross_partition_query=True))
+        total_scans = scans[0] if scans and scans[0] else 0
+
+        # 3. Total items in vault across all shops
+        items_query = "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'inventory' AND c.status = 'active'"
+        items = list(container.query_items(query=items_query, enable_cross_partition_query=True))
+        total_items = items[0] if items else 0
+
+        # 4. Training signals collected (labeled OCR pairs)
+        signals_query = "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'training_signal'"
+        signals = list(container.query_items(query=signals_query, enable_cross_partition_query=True))
+        total_signals = signals[0] if signals else 0
+
+        # 5. Items currently in quarantine (needs review)
+        quarantine_query = "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'quarantine' AND c.status = 'needs_review'"
+        quarantine = list(container.query_items(query=quarantine_query, enable_cross_partition_query=True))
+        quarantine_count = quarantine[0] if quarantine else 0
+
+        return {
+            "status": "success",
+            "month": current_month,
+            "data": {
+                "monthly_active_shops": active_shops,
+                "total_scans_this_month": total_scans,
+                "total_items_in_vault": total_items,
+                "training_signals_collected": total_signals,
+                "items_in_quarantine": quarantine_count
+            }
+        }
+    except Exception as e:
+        print(f"Analytics Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch analytics.")
+# ─────────────────────────────────────────────────────────────────────────────
