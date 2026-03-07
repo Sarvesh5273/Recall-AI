@@ -3,7 +3,6 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 from jose import JWTError, jwt
-import bcrypt
 import uuid
 import random
 import os
@@ -36,13 +35,11 @@ class VerifyOTPPayload(BaseModel):
 class RegisterPayload(BaseModel):
     phone: str
     otp: str
-    pin: str            # 6 digit PIN
-    pin_confirm: str
     shop_name: str
 
-class LoginPayload(BaseModel):
+class LoginOTPPayload(BaseModel):
     phone: str
-    pin: str
+    otp: str
 
 # ── HELPERS ──────────────────────────────────────────────────────────────────
 def normalize_phone(phone: str) -> str:
@@ -54,12 +51,6 @@ def normalize_phone(phone: str) -> str:
         elif len(phone) == 10:
             phone = "+91" + phone
     return phone
-
-def hash_pin(pin: str) -> str:
-    return bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
-
-def verify_pin(pin: str, hashed: str) -> bool:
-    return bcrypt.checkpw(pin.encode(), hashed.encode())
 
 def create_jwt(shop_id: str, phone: str) -> str:
     payload = {
@@ -134,22 +125,45 @@ def send_otp(payload: SendOTPPayload):
 
     _otp_store[phone] = {"otp": otp, "expires_at": expires_at}
 
-    # TODO: Replace with MSG91 API call in production
-    # import httpx
-    # await httpx.post("https://api.msg91.com/api/v5/otp", ...)
-    print(f"🔐 OTP for {phone}: {otp}  (dev mode — replace with SMS in production)")
+    env = os.getenv("ENV", "development")
+
+    if env == "production":
+        # ── TWILIO SMS ────────────────────────────────────────────────────────
+        # Trial account: can only SMS to verified numbers (your own phone)
+        # Upgrade to paid account to SMS any number
+        try:
+            from twilio.rest import Client as TwilioClient
+            account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+            auth_token  = os.getenv("TWILIO_AUTH_TOKEN")
+            from_number = os.getenv("TWILIO_PHONE_NUMBER")
+            if not all([account_sid, auth_token, from_number]):
+                raise ValueError("Twilio credentials not set in environment")
+            client = TwilioClient(account_sid, auth_token)
+            client.messages.create(
+                body=f"Your Recall AI OTP is {otp}. Valid for {OTP_EXPIRE_MINUTES} minutes. Do not share.",
+                from_=from_number,
+                to=phone
+            )
+            print(f"📱 OTP SMS sent via Twilio to {phone}")
+        except Exception as e:
+            print(f"❌ Twilio SMS failed: {e}")
+            raise HTTPException(status_code=500, detail="Failed to send OTP. Try again.")
+        # ─────────────────────────────────────────────────────────────────────
+    else:
+        # Dev mode — OTP printed to console, no SMS sent
+        print(f"🔐 [DEV] OTP for {phone}: {otp}")
 
     return {
         "status": "success",
-        "message": f"OTP sent to {phone}",
-        "dev_note": "In production this will be sent via SMS. For now check server logs."
+        "message": f"OTP sent to {phone}"
     }
 
 
 @router.post("/auth/register")
 def register(payload: RegisterPayload):
     """
-    Step 2: Verify OTP + set PIN + shop name → create account + return JWT
+    New user: verify OTP + shop name → create account + return JWT.
+    PIN is local-only (stored on device in AsyncStorage, never sent here).
     """
     phone = normalize_phone(payload.phone)
 
@@ -166,14 +180,7 @@ def register(payload: RegisterPayload):
     if stored["otp"] != payload.otp.strip():
         raise HTTPException(status_code=400, detail="Incorrect OTP.")
 
-    # 2. Validate PIN
-    if len(payload.pin) != 6 or not payload.pin.isdigit():
-        raise HTTPException(status_code=400, detail="PIN must be exactly 6 digits.")
-
-    if payload.pin != payload.pin_confirm:
-        raise HTTPException(status_code=400, detail="PINs do not match.")
-
-    # 3. Check phone not already registered
+    # 2. Check phone not already registered
     container = db.get_container()
     existing_query = "SELECT c.id FROM c WHERE c.phone = @phone AND c.type = 'shop_account'"
     existing = list(container.query_items(
@@ -182,20 +189,20 @@ def register(payload: RegisterPayload):
         enable_cross_partition_query=True
     ))
     if existing:
-        raise HTTPException(status_code=409, detail="Phone number already registered. Please login.")
+        raise HTTPException(status_code=409, detail="ALREADY_REGISTERED")
 
-    # 4. Generate unique shop_id
-    city_code = "IN"  # TODO: derive from phone area code post-MVP
+    # 3. Generate unique shop_id
+    city_code = "IN"
     random_suffix = str(random.randint(1000, 9999))
     shop_id = f"shop_{city_code}_{random_suffix}"
 
-    # 5. Create shop account in Cosmos
+    # 4. Create shop account in Cosmos — no PIN stored, ever
     account = {
         "id": str(uuid.uuid4()),
         "shop_id": shop_id,
         "phone": phone,
         "shop_name": payload.shop_name.strip(),
-        "pin_hash": hash_pin(payload.pin),
+        "plan": "free",
         "type": "shop_account",
         "status": "active",
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -218,43 +225,46 @@ def register(payload: RegisterPayload):
     }
 
 
-@router.post("/auth/login")
-def login(payload: LoginPayload):
+@router.post("/auth/login-otp")
+def login_otp(payload: LoginOTPPayload):
     """
-    Login: phone + 6 digit PIN → JWT
-    Rate limited: 5 attempts → 30 min lockout
+    Existing user login via OTP — no PIN involved.
+    PIN lives on-device only (AsyncStorage). Backend never sees it.
+    Returns 404 NOT_REGISTERED if phone has no account → VerifyOTPScreen
+    routes to registration flow.
     """
     phone = normalize_phone(payload.phone)
 
-    # 1. Rate limit check
-    check_rate_limit(phone)
+    # 1. Validate OTP
+    stored = _otp_store.get(phone)
+    if not stored:
+        raise HTTPException(status_code=400, detail="OTP not found. Request a new one.")
+
+    now = datetime.now(timezone.utc).timestamp()
+    if now > stored["expires_at"]:
+        _otp_store.pop(phone, None)
+        raise HTTPException(status_code=400, detail="OTP expired. Request a new one.")
+
+    if stored["otp"] != payload.otp.strip():
+        raise HTTPException(status_code=400, detail="Incorrect OTP.")
 
     # 2. Find account
     container = db.get_container()
-    query = "SELECT * FROM c WHERE c.phone = @phone AND c.type = 'shop_account' AND c.status = 'active'"
     accounts = list(container.query_items(
-        query=query,
+        query="SELECT * FROM c WHERE c.phone = @phone AND c.type = 'shop_account' AND c.status = 'active'",
         parameters=[{"name": "@phone", "value": phone}],
         enable_cross_partition_query=True
     ))
 
     if not accounts:
-        record_failed_attempt(phone)
-        raise HTTPException(status_code=401, detail="Phone number not registered.")
+        # OTP valid but not registered — DO NOT pop OTP, /auth/register still needs it
+        raise HTTPException(status_code=404, detail="NOT_REGISTERED")
 
     account = accounts[0]
+    _otp_store.pop(phone, None)
 
-    # 3. Verify PIN
-    if not verify_pin(payload.pin, account["pin_hash"]):
-        record_failed_attempt(phone)
-        raise HTTPException(status_code=401, detail="Incorrect PIN.")
-
-    # 4. Clear failed attempts on success
-    clear_attempts(phone)
-
-    # 5. Return JWT
     token = create_jwt(account["shop_id"], phone)
-    print(f"🔑 Login: {account['shop_id']} — {account['shop_name']}")
+    print(f"🔑 OTP Login: {account['shop_id']} — {account['shop_name']}")
 
     return {
         "status": "success",
@@ -268,7 +278,7 @@ def login(payload: LoginPayload):
 def get_me(current_shop: dict = Depends(get_current_shop)):
     """Verify token + return shop info. Used on app startup to validate stored JWT."""
     container = db.get_container()
-    query = "SELECT c.shop_id, c.shop_name, c.phone FROM c WHERE c.shop_id = @shop_id AND c.type = 'shop_account'"
+    query = "SELECT c.shop_id, c.shop_name, c.phone, c.plan FROM c WHERE c.shop_id = @shop_id AND c.type = 'shop_account'"
     accounts = list(container.query_items(
         query=query,
         parameters=[{"name": "@shop_id", "value": current_shop["shop_id"]}],
@@ -282,5 +292,6 @@ def get_me(current_shop: dict = Depends(get_current_shop)):
         "status": "success",
         "shop_id": accounts[0]["shop_id"],
         "shop_name": accounts[0]["shop_name"],
-        "phone": accounts[0]["phone"]
+        "phone": accounts[0]["phone"],
+        "plan": accounts[0].get("plan", "free")   # default "free" for older accounts
     }

@@ -15,7 +15,7 @@ import { AuthProvider, useAuth } from './src/context/AuthContext';
 import SendOTPScreen from './src/screens/auth/SendOTPScreen';
 import VerifyOTPScreen from './src/screens/auth/VerifyOTPScreen';
 import SetPINScreen from './src/screens/auth/SetPINScreen';
-import LoginScreen from './src/screens/auth/LoginScreen';
+import PINLockScreen from './src/screens/auth/PINLockScreen';
 
 // App Screens
 import HomeScreen from './src/screens/HomeScreen';
@@ -108,10 +108,18 @@ function AppNavigator() {
 
   useEffect(() => {
     processOutboxQueue();
+
+    // Retry every 30 seconds — catches failed scans without waiting for app state change
+    const interval = setInterval(() => processOutboxQueue(), 30000);
+
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') processOutboxQueue();
     });
-    return () => subscription.remove();
+
+    return () => {
+      subscription.remove();
+      clearInterval(interval);
+    };
   }, []);
 
   return (
@@ -130,13 +138,12 @@ function AuthNavigator() {
       <Stack.Screen name="SendOTP" component={SendOTPScreen} />
       <Stack.Screen name="VerifyOTP" component={VerifyOTPScreen} />
       <Stack.Screen name="SetPIN" component={SetPINScreen} />
-      <Stack.Screen name="Login" component={LoginScreen} />
     </Stack.Navigator>
   );
 }
 
 function RootNavigator() {
-  const { token, isLoading } = useAuth();
+  const { token, isLoading, localPinSet, pinVerified } = useAuth();
 
   if (isLoading) {
     return (
@@ -146,9 +153,42 @@ function RootNavigator() {
     );
   }
 
+  // No token → not logged in → auth flow
+  if (!token) {
+    return (
+      <NavigationContainer>
+        <AuthNavigator />
+      </NavigationContainer>
+    );
+  }
+
+  // Token exists but no local PIN set (new device or reinstall)
+  // Show SetPINScreen in local mode (no phone/otp params = local mode)
+  if (!localPinSet) {
+    return (
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="SetLocalPIN" component={SetPINScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    );
+  }
+
+  // Token + PIN set but not verified this session → PIN lock
+  if (!pinVerified) {
+    return (
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="PINLock" component={PINLockScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    );
+  }
+
+  // Fully authenticated + PIN verified → main app
   return (
     <NavigationContainer>
-      {token ? <AppNavigator /> : <AuthNavigator />}
+      <AppNavigator />
     </NavigationContainer>
   );
 }

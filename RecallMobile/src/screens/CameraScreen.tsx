@@ -10,9 +10,11 @@ import NetInfo from '@react-native-community/netinfo'; // THE NETWORK CONTEXT EN
 import { database } from '../database';
 import PendingScan from '../database/PendingScan';
 import { processOutboxQueue } from '../utils/SyncWorker';
+import { useAuth } from '../context/AuthContext';
 
 export default function CameraScreen({ route, navigation }: any) {
-  const { type } = route.params || { type: 'OUT' }; 
+  const { type } = route.params || { type: 'OUT' };
+  const { shopId } = useAuth();
   
   const device = useCameraDevice('back');
   const camera = useRef<Camera>(null);
@@ -50,7 +52,7 @@ export default function CameraScreen({ route, navigation }: any) {
           scan.scanId = uniqueScanId;
           scan.imageUri = compressedUri;
           scan.scanType = type; 
-          scan.shopId = 'shop_10065';
+          scan.shopId = shopId ?? '';
           scan.status = 'pending'; 
           scan.retryCount = 0;     
           scan.createdAt = new Date();

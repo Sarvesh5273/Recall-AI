@@ -6,10 +6,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import { API_BASE_URL } from '@env';
+import { useAuth } from '../../context/AuthContext';
 
 export default function VerifyOTPScreen({ route, navigation }: any) {
   const insets = useSafeAreaInsets();
-  const { phone } = route.params;
+  const { phone, mode } = route.params; // mode: 'login' | 'register'
+  const { login } = useAuth();
+
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -39,10 +42,62 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
     }
   };
 
-  const handleVerify = (code?: string) => {
+  const handleVerify = async (code?: string) => {
     const otpCode = code || otp.join('');
     if (otpCode.length !== 6) return;
-    navigation.replace('SetPIN', { phone, otp: otpCode });
+
+    setLoading(true);
+    setError('');
+
+    try {
+      // Try existing user login first
+      const res = await fetch(`${API_BASE_URL}/auth/login-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, otp: otpCode })
+      });
+
+      const json = await res.json();
+
+      if (res.ok) {
+        // Existing user — JWT issued, go to PIN flow
+        await login(json.token, json.shop_id, json.shop_name);
+        // AuthContext + RootNavigator handles the rest:
+        // localPinSet? → PINLockScreen : SetPINScreen
+        return;
+      }
+
+      if (res.status === 404 && json.detail === 'NOT_REGISTERED') {
+        if (mode === 'login') {
+          // User tried to login but number is not registered
+          setError('Number not registered. Please register first.');
+          setOtp(['', '', '', '', '', '']);
+          inputRefs.current[0]?.focus();
+        } else {
+          // Register mode — expected, route to SetPIN
+          navigation.replace('SetPIN', { phone, otp: otpCode });
+        }
+        return;
+      }
+
+      // Handle register attempt on already-registered number
+      if (res.status === 409 && json.detail === 'ALREADY_REGISTERED') {
+        setError('Number already registered. Switch to Login.');
+        setOtp(['', '', '', '', '', '']);
+        inputRefs.current[0]?.focus();
+        return;
+      }
+
+      // OTP wrong or expired
+      setError(json.detail || 'Invalid OTP. Try again.');
+      setOtp(['', '', '', '', '', '']);
+      inputRefs.current[0]?.focus();
+
+    } catch {
+      setError('Connection failed. Check your network.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleResend = async () => {
@@ -62,20 +117,18 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
   const maskedPhone = `+91 XXXXX X${phone.slice(-4)}`;
 
   return (
-    <View style={[styles.container]}>
-      {/* Header */}
+    <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Feather name="arrow-left" size={20} color="#94A3B8" />
         </TouchableOpacity>
         <View>
           <Text style={styles.headerSub}>RECALL AI</Text>
-          <Text style={styles.headerTitle}>Verify OTP</Text>
+          <Text style={styles.headerTitle}>{mode === 'login' ? 'Login OTP' : 'Verify OTP'}</Text>
         </View>
       </View>
 
       <View style={styles.body}>
-        {/* Step indicator */}
         <View style={styles.stepRow}>
           <View style={[styles.stepDot, styles.stepDotDone]} />
           <View style={[styles.stepLine, styles.stepLineDone]} />
@@ -85,21 +138,21 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
         </View>
         <Text style={styles.stepLabel}>Step 2 of 3 — Enter OTP</Text>
 
-        {/* Card */}
         <View style={styles.card}>
           <View style={styles.iconWrap}>
             <Feather name="shield" size={28} color="#3B82F6" />
           </View>
           <Text style={styles.cardTitle}>6-Digit OTP</Text>
-          <Text style={styles.cardSub}>Sent to <Text style={styles.phoneHighlight}>{maskedPhone}</Text></Text>
+          <Text style={styles.cardSub}>
+            Sent to <Text style={styles.phoneHighlight}>{maskedPhone}</Text>
+          </Text>
 
-          {/* OTP Boxes */}
           <View style={styles.otpRow}>
             {otp.map((digit, idx) => (
               <TextInput
                 key={idx}
                 ref={r => { if (r) inputRefs.current[idx] = r; }}
-                style={[styles.otpBox, digit ? styles.otpBoxFilled : null]}
+                style={[styles.otpBox, digit ? styles.otpBoxFilled : null, !!error && styles.otpBoxError]}
                 value={digit}
                 onChangeText={v => handleChange(v, idx)}
                 onKeyPress={e => handleKeyPress(e, idx)}
@@ -107,6 +160,7 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
                 maxLength={1}
                 autoFocus={idx === 0}
                 selectTextOnFocus
+                editable={!loading}
               />
             ))}
           </View>
@@ -118,7 +172,6 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
             </View>
           ) : null}
 
-          {/* Resend */}
           <View style={styles.resendRow}>
             <Text style={styles.resendText}>Didn't receive it? </Text>
             {resendTimer > 0
@@ -131,7 +184,7 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
         </View>
 
         <TouchableOpacity
-          style={[styles.btn, otp.join('').length < 6 && styles.btnDisabled]}
+          style={[styles.btn, (otp.join('').length < 6 || loading) && styles.btnDisabled]}
           onPress={() => handleVerify()}
           disabled={otp.join('').length < 6 || loading}
           activeOpacity={0.85}
@@ -144,8 +197,6 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
               </>
           }
         </TouchableOpacity>
-
-        <Text style={styles.devNote}>Dev mode: check server console for OTP</Text>
       </View>
     </View>
   );
@@ -153,25 +204,17 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
-
   header: {
-    backgroundColor: '#0F172A',
-    borderBottomLeftRadius: 32,
-    borderBottomRightRadius: 32,
-    paddingBottom: 32,
-    paddingHorizontal: 24,
+    backgroundColor: '#0F172A', borderBottomLeftRadius: 32, borderBottomRightRadius: 32,
+    paddingBottom: 32, paddingHorizontal: 24,
   },
   backBtn: {
-    width: 40, height: 40, borderRadius: 12,
-    backgroundColor: '#1E293B',
-    justifyContent: 'center', alignItems: 'center',
-    marginBottom: 20,
+    width: 40, height: 40, borderRadius: 12, backgroundColor: '#1E293B',
+    justifyContent: 'center', alignItems: 'center', marginBottom: 20,
   },
   headerSub: { color: '#64748B', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 },
   headerTitle: { color: '#FFFFFF', fontSize: 26, fontWeight: '800' },
-
   body: { flex: 1, paddingHorizontal: 16, paddingTop: 24 },
-
   stepRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   stepDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#E2E8F0' },
   stepDotActive: { backgroundColor: '#3B82F6', width: 28, borderRadius: 6 },
@@ -179,38 +222,32 @@ const styles = StyleSheet.create({
   stepLine: { flex: 1, height: 2, backgroundColor: '#E2E8F0', marginHorizontal: 6 },
   stepLineDone: { backgroundColor: '#10B981' },
   stepLabel: { color: '#64748B', fontSize: 13, fontWeight: '600', marginBottom: 20 },
-
   card: {
     backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, marginBottom: 16,
     shadowColor: '#64748B', shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.08, shadowRadius: 16, elevation: 4,
   },
   iconWrap: {
-    width: 56, height: 56, borderRadius: 16,
-    backgroundColor: '#EFF6FF',
+    width: 56, height: 56, borderRadius: 16, backgroundColor: '#EFF6FF',
     justifyContent: 'center', alignItems: 'center', marginBottom: 16,
   },
   cardTitle: { fontSize: 20, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
   cardSub: { fontSize: 14, color: '#64748B', fontWeight: '500', marginBottom: 24 },
   phoneHighlight: { color: '#3B82F6', fontWeight: '700' },
-
   otpRow: { flexDirection: 'row', gap: 10, justifyContent: 'center', marginBottom: 20 },
   otpBox: {
     width: 46, height: 54, borderRadius: 12,
-    borderWidth: 1.5, borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC',
     color: '#0F172A', fontSize: 22, fontWeight: '800', textAlign: 'center',
   },
   otpBoxFilled: { borderColor: '#3B82F6', backgroundColor: '#EFF6FF' },
-
+  otpBoxError: { borderColor: '#EF4444', backgroundColor: '#FEF2F2' },
   errorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
   errorText: { color: '#EF4444', fontSize: 13, fontWeight: '600' },
-
   resendRow: { flexDirection: 'row', justifyContent: 'center' },
   resendText: { color: '#64748B', fontSize: 14 },
   resendTimer: { color: '#94A3B8', fontSize: 14, fontWeight: '600' },
   resendBtn: { color: '#3B82F6', fontSize: 14, fontWeight: '700' },
-
   btn: {
     backgroundColor: '#3B82F6', borderRadius: 16, paddingVertical: 18,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -219,6 +256,4 @@ const styles = StyleSheet.create({
   },
   btnDisabled: { backgroundColor: '#CBD5E1', shadowOpacity: 0 },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
-
-  devNote: { color: '#CBD5E1', fontSize: 11, textAlign: 'center', marginTop: 16 },
 });

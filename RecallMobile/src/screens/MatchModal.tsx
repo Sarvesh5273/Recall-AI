@@ -6,6 +6,7 @@ import Fuse from 'fuse.js';
 
 // Secure Routing & Local DB
 import { API_BASE_URL } from '@env';
+import { useAuth } from '../context/AuthContext';
 import { database } from '../database';
 
 // 1. IMPORT THE STATIC MASTER DICTIONARY
@@ -14,6 +15,7 @@ import masterDictionary from '../data/master_seed.json';
 export default function MatchModal({ route, navigation }: any) {
   const insets = useSafeAreaInsets();
   const { rawText, itemId, quantity, unit } = route.params || { rawText: 'Unknown', itemId: '', quantity: 1, unit: 'unit' };
+  const { token, shopId } = useAuth();
   
   const [isSyncing, setIsSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -68,18 +70,21 @@ export default function MatchModal({ route, navigation }: any) {
       const finalQuantity = parseFloat(editableQuantity) || 1; 
 
       const payload = {
-        shop_id: "shop_10065", 
+        shop_id: shopId,
         uid: masterItem.uid,
         standard_name: masterItem.name,
         quantity: finalQuantity, 
         unit: unit,
         scan_type: quarantineRecord.scanType || "IN",
-        raw_text: rawText  // ← training signal: what OCR originally read
+        raw_text: rawText
       };
 
       const response = await fetch(`${API_BASE_URL}/sync-mapped-item`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify(payload),
       });
 
@@ -108,16 +113,20 @@ export default function MatchModal({ route, navigation }: any) {
       const finalQuantity = parseFloat(editableQuantity) || 1; 
 
       const payload = {
-        shop_id: "shop_10065",
-        custom_name: searchQuery.trim(), 
-        quantity: finalQuantity, 
+        shop_id: shopId,
+        custom_name: searchQuery.trim(),
+        quantity: finalQuantity,
         unit: unit,
-        scan_type: quarantineRecord.scanType || "IN"
+        scan_type: quarantineRecord.scanType || "IN",
+        raw_text: rawText   // OCR text → training signal
       };
 
       const response = await fetch(`${API_BASE_URL}/create-custom-item`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify(payload),
       });
 

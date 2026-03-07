@@ -43,13 +43,10 @@ export default function LoginScreen({ navigation }: any) {
     };
   }, []);
 
- const handleCardPress = () => {
-  Keyboard.dismiss();
-
-  setTimeout(() => {
-    inputRef.current?.focus();
-  }, 120);
-};
+  const handleCardPress = () => {
+    Keyboard.dismiss();
+    setTimeout(() => inputRef.current?.focus(), 120);
+  };
 
   const handlePinChange = (val: string) => {
     const digits = val.replace(/\D/g, '').slice(0, 6);
@@ -96,7 +93,9 @@ export default function LoginScreen({ navigation }: any) {
     >
       <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
         <Text style={styles.headerSub}>RECALL AI</Text>
-        <Text style={styles.headerTitle}>Welcome back</Text>
+        <Text style={styles.headerTitle}>
+          {shopName ? 'Welcome back' : 'Login'}
+        </Text>
         {shopName ? <Text style={styles.shopName}>{shopName}</Text> : null}
       </View>
 
@@ -153,6 +152,7 @@ export default function LoginScreen({ navigation }: any) {
           <Feather name="plus-circle" size={15} color="#3B82F6" />
           <Text style={styles.registerText}>Register a new shop</Text>
         </TouchableOpacity>
+
       </View>
     </KeyboardAvoidingView>
   );

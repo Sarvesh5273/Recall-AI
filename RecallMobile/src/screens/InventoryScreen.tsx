@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, 
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
+import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '@env';
 
 export default function InventoryScreen() {
   const insets = useSafeAreaInsets();
+  const { shopId } = useAuth();
   const [inventory, setInventory] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -16,7 +18,7 @@ export default function InventoryScreen() {
 
   const fetchInventory = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/inventory?shop_id=shop_10065`);
+      const response = await fetch(`${API_BASE_URL}/inventory?shop_id=${shopId}`);
       if (!response.ok) throw new Error("Failed to fetch");
       const json = await response.json();
       if (json.status === "success") setInventory(json.data);
@@ -34,7 +36,7 @@ export default function InventoryScreen() {
     if (!selectedItem) return;
     setIsUpdating(true);
     try {
-      const payload = { shop_id: "shop_10065", uid: selectedItem.uid, new_quantity: targetQuantity };
+      const payload = { shop_id: shopId ?? "", uid: selectedItem.uid, new_quantity: targetQuantity };
       const response = await fetch(`${API_BASE_URL}/adjust-inventory`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       });

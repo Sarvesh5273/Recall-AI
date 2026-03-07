@@ -6,11 +6,11 @@ import { Q } from '@nozbe/watermelondb';
 import RNFS from 'react-native-fs';
 import Fuse from 'fuse.js';
 import masterDictionary from '../data/master_seed.json';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const MAX_RETRIES = 5;
-const AUTO_MATCH_THRESHOLD = 0.35; // Fuse score — lower = stricter (0 is perfect match)
+const AUTO_MATCH_THRESHOLD = 0.35;
 
-// Singleton guard — prevents NetInfo and AppState from colliding
 let isSyncProcessing = false;
 
 // ─── LOCAL EDGE MATCHER ───────────────────────────────────────────────────────
@@ -24,7 +24,8 @@ const tryLocalAutoMatch = async (
   quantity: number,
   unit: string,
   scanType: string,
-  shopId: string
+  shopId: string,
+  token: string | null
 ): Promise<boolean> => {
   try {
     const localCustoms = await database.get('custom_skus').query().fetch();
@@ -63,7 +64,10 @@ const tryLocalAutoMatch = async (
 
     const response = await fetch(`${API_BASE_URL}/sync-mapped-item`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify(payload),
     });
 
@@ -95,10 +99,10 @@ export const processOutboxQueue = async () => {
     const now = Date.now();
 
     // Zombie Recovery
-    const fiveMinsAgo = now - 5 * 60 * 1000;
+    const fiveMinsAgo = now - 30 * 1000; // 30 seconds — fast recovery for dev, fine for prod too
     const zombies = await scansCollection.query(
       Q.where('status', 'syncing'),
-      Q.where('created_at', Q.lte(fiveMinsAgo))
+      Q.where('next_retry_at', Q.lte(now)) // zombie = stuck syncing past its retry time
     ).fetch();
 
     if (zombies.length > 0) {
@@ -133,10 +137,26 @@ export const processOutboxQueue = async () => {
         formData.append('scan_type', scan.scanType);
         formData.append('scan_id', scan.scanId);
 
+        const token = await AsyncStorage.getItem('recall_token');
+
         const response = await fetch(`${API_BASE_URL}/process-ledger`, {
           method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: formData,
         });
+
+        // Scan limit exceeded — mark as failed, do NOT retry
+        // The app will show an upgrade prompt to the user
+        if (response.status === 403) {
+          console.warn(`Scan limit reached for shop ${scan.shopId}. Marking as limit_exceeded.`);
+          await database.write(async () => {
+            await scan.update(s => {
+              s.status = 'failed';
+              s.retryCount = MAX_RETRIES; // prevents any further retry
+            });
+          });
+          continue;
+        }
 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -156,7 +176,8 @@ export const processOutboxQueue = async () => {
               item.quantity,
               item.unit,
               scan.scanType,
-              scan.shopId
+              scan.shopId,
+              token
             );
             if (!autoMatched) trulyUnknown.push(item);
           }
@@ -168,6 +189,7 @@ export const processOutboxQueue = async () => {
           }
           // ─────────────────────────────────────────────────────────────────
 
+          // Write quarantine items + destroy scan record (DB only — no file I/O inside)
           await database.write(async () => {
             for (const item of trulyUnknown) {
               await database.get<Quarantine>('quarantine').create(qItem => {
@@ -178,16 +200,16 @@ export const processOutboxQueue = async () => {
                 qItem.status = 'needs_review';
               });
             }
-
-            try {
-              const fileExists = await RNFS.exists(scan.imageUri);
-              if (fileExists) await RNFS.unlink(scan.imageUri);
-            } catch (fsError) {
-              console.error('File deletion failed:', fsError);
-            }
-
             await scan.destroyPermanently();
           });
+
+          // Delete image file AFTER database transaction completes
+          try {
+            const fileExists = await RNFS.exists(scan.imageUri);
+            if (fileExists) await RNFS.unlink(scan.imageUri);
+          } catch (fsError) {
+            console.error('File deletion failed (non-critical):', fsError);
+          }
         }
       } catch (error) {
         console.error(`Sync failed for ${scan.scanId}:`, error);
