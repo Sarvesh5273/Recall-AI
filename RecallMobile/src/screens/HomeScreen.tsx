@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_BASE_URL } from '@env';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import SyncBadge from '../components/SyncBadge';
 
 const PLAN_LABELS: Record<string, string> = {
@@ -23,6 +24,7 @@ const PLAN_COLORS: Record<string, string> = {
 export default function HomeScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const { shopId, shopName } = useAuth();
+  const { t } = useLanguage();
 
   const [isLoading, setIsLoading] = useState(true);
   const [stats, setStats] = useState({ totalItems: 0, lowStock: 0, outOfStock: 0 });
@@ -91,7 +93,7 @@ export default function HomeScreen({ navigation }: any) {
       <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
         <View style={styles.headerContent}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.welcomeText}>Welcome Back</Text>
+            <Text style={styles.welcomeText}>{t('home_greeting')}</Text>
             <Text style={styles.ownerName}>{shopName ?? 'Shop Owner'}</Text>
             <View style={styles.planBadge}>
               <View style={[styles.planDot, { backgroundColor: PLAN_COLORS[usage.plan] ?? '#64748B' }]} />
@@ -110,7 +112,7 @@ export default function HomeScreen({ navigation }: any) {
         <View style={styles.card}>
           <View style={styles.usageRow}>
             <View>
-              <Text style={styles.usageTitle}>Scans This Month</Text>
+              <Text style={styles.usageTitle}>{t('home_scans_used')}</Text>
               <Text style={styles.usageCount}>
                 {isUnlimited
                   ? `${scansUsed} used`
@@ -120,19 +122,19 @@ export default function HomeScreen({ navigation }: any) {
             </View>
             {isAtLimit && (
               <TouchableOpacity style={styles.upgradeBtn}>
-                <Text style={styles.upgradeBtnText}>Upgrade</Text>
+                <Text style={styles.upgradeBtnText}>{t('home_upgrade')}</Text>
               </TouchableOpacity>
             )}
             {!isAtLimit && isNearLimit && (
               <View style={styles.warningBadge}>
                 <Feather name="alert-triangle" size={12} color="#F59E0B" />
-                <Text style={styles.warningText}>Almost full</Text>
+                <Text style={styles.warningText}>{t('home_low_stock')}</Text>
               </View>
             )}
             {isUnlimited && (
               <View style={styles.unlimitedBadge}>
                 <Feather name="zap" size={12} color="#8B5CF6" />
-                <Text style={styles.unlimitedText}>Unlimited</Text>
+                <Text style={styles.unlimitedText}>{t('home_unlimited')}</Text>
               </View>
             )}
           </View>
@@ -165,8 +167,8 @@ export default function HomeScreen({ navigation }: any) {
             <View style={[styles.actionIconBg, { backgroundColor: isAtLimit ? '#F1F5F9' : '#F0FDF4' }]}>
               <Feather name="download" size={32} color={isAtLimit ? '#94A3B8' : '#10B981'} />
             </View>
-            <Text style={[styles.actionTitle, isAtLimit && { color: '#94A3B8' }]}>Restock</Text>
-            <Text style={styles.actionSub}>Scan Invoice</Text>
+            <Text style={[styles.actionTitle, isAtLimit && { color: '#94A3B8' }]}>{t('home_scan_restock').split(' ')[0]}</Text>
+            <Text style={styles.actionSub}>{t('home_scan_restock')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -177,15 +179,15 @@ export default function HomeScreen({ navigation }: any) {
             <View style={[styles.actionIconBg, { backgroundColor: isAtLimit ? '#F1F5F9' : '#EFF6FF' }]}>
               <Feather name="upload" size={32} color={isAtLimit ? '#94A3B8' : '#3B82F6'} />
             </View>
-            <Text style={[styles.actionTitle, isAtLimit && { color: '#94A3B8' }]}>Sale (Out)</Text>
-            <Text style={styles.actionSub}>Scan Ledger</Text>
+            <Text style={[styles.actionTitle, isAtLimit && { color: '#94A3B8' }]}>{t('home_scan_sale')}</Text>
+            <Text style={styles.actionSub}>{t('home_scan_sale')}</Text>
           </TouchableOpacity>
         </View>
 
         {/* BUSINESS HEALTH */}
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Business Health</Text>
+            <Text style={styles.sectionTitle}>{t('home_total_items').replace('Total ', '')}{' Health'}</Text>
             <Feather name="trending-up" size={18} color="#64748B" />
           </View>
 
@@ -195,17 +197,17 @@ export default function HomeScreen({ navigation }: any) {
             <View style={styles.statsRow}>
               <View style={styles.statBox}>
                 <Text style={styles.statNumber}>{stats.totalItems}</Text>
-                <Text style={styles.statLabel}>Total SKUs</Text>
+                <Text style={styles.statLabel}>{t('home_total_items')}</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statBox}>
                 <Text style={[styles.statNumber, { color: '#F59E0B' }]}>{stats.lowStock}</Text>
-                <Text style={styles.statLabel}>Low Stock</Text>
+                <Text style={styles.statLabel}>{t('home_low_stock')}</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statBox}>
                 <Text style={[styles.statNumber, { color: '#EF4444' }]}>{stats.outOfStock}</Text>
-                <Text style={styles.statLabel}>Zero Stock</Text>
+                <Text style={styles.statLabel}>{t('home_out_of_stock')}</Text>
               </View>
             </View>
           )}

@@ -98,11 +98,11 @@ export const processOutboxQueue = async () => {
     const scansCollection = database.get<PendingScan>('pending_scans');
     const now = Date.now();
 
-    // Zombie Recovery
-    const fiveMinsAgo = now - 30 * 1000; // 30 seconds — fast recovery for dev, fine for prod too
+    // Zombie Recovery — only reset scans stuck in 'syncing' for 30+ seconds
+    const thirtySecsAgo = now - 30 * 1000;
     const zombies = await scansCollection.query(
       Q.where('status', 'syncing'),
-      Q.where('next_retry_at', Q.lte(now)) // zombie = stuck syncing past its retry time
+      Q.where('next_retry_at', Q.lte(thirtySecsAgo))
     ).fetch();
 
     if (zombies.length > 0) {
@@ -126,7 +126,7 @@ export const processOutboxQueue = async () => {
       await database.write(async () => {
         await scan.update(s => {
           s.status = 'syncing';
-          s.createdAt = new Date();
+          s.nextRetryAt = Date.now() + 60 * 1000; // protect for 60s — zombie check won't touch it
         });
       });
 

@@ -11,10 +11,12 @@ import { database } from '../database';
 import PendingScan from '../database/PendingScan';
 import { processOutboxQueue } from '../utils/SyncWorker';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 
 export default function CameraScreen({ route, navigation }: any) {
   const { type } = route.params || { type: 'OUT' };
   const { shopId } = useAuth();
+  const { t } = useLanguage();
   
   const device = useCameraDevice('back');
   const camera = useRef<Camera>(null);
@@ -69,15 +71,15 @@ export default function CameraScreen({ route, navigation }: any) {
 
       if (isOnline) {
         Alert.alert(
-          "Processing 🚀", 
-          "Ledger captured securely. It is currently syncing to the AI cloud in the background.",
-          [{ text: "Great", onPress: () => navigation.goBack() }]
+          t('camera_processing_title'), 
+          t('camera_processing_msg'),
+          [{ text: t('great'), onPress: () => navigation.goBack() }]
         );
       } else {
         Alert.alert(
-          "Saved to Outbox 📦", 
-          "You are currently offline. Your ledger is safely stored and will automatically sync when your internet returns.",
-          [{ text: "OK", onPress: () => navigation.goBack() }]
+          t('camera_offline_title'), 
+          t('camera_offline_msg'),
+          [{ text: t('ok'), onPress: () => navigation.goBack() }]
         );
       }
       
@@ -122,7 +124,7 @@ export default function CameraScreen({ route, navigation }: any) {
             disabled={isProcessing}
           >
             <Feather name={isRestock ? "package" : "shopping-cart"} size={24} color="#FFFFFF" style={{ marginRight: 12 }} />
-            <Text style={styles.buttonTitle}>{isProcessing ? 'Saving...' : (isRestock ? 'Scan Restock (IN)' : 'Scan Sale (OUT)')}</Text>
+            <Text style={styles.buttonTitle}>{isProcessing ? t('camera_saving') : (isRestock ? t('camera_restock') : t('camera_sale'))}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>

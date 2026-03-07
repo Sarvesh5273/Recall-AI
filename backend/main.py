@@ -36,15 +36,6 @@ app = FastAPI(title="Recall AI Enterprise Engine", version="5.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 # TODO: Lock CORS to app domain post-deployment: allow_origins=["https://your-domain.com"]
 
-# ── PLAN LIMITS ───────────────────────────────────────────────────────────────
-# None = unlimited (Pro plan)
-PLAN_LIMITS = {
-    "free":  60,
-    "basic": 300,
-    "pro":   None,
-}
-# ─────────────────────────────────────────────────────────────────────────────
-
 # Register auth routes
 app.include_router(auth_router)
 
@@ -56,52 +47,12 @@ with open(_catalog_path, "r", encoding="utf-8") as f:
 MASTER_DICTIONARY = {item["uid"]: {"en": item["en"], "aliases": item["aliases"]} for item in _catalog_list}
 ALL_ALIASES = [alias for item in MASTER_DICTIONARY.values() for alias in item["aliases"]]
 
-def sort_extracted_item(raw_ai_text: str, shop_id: str = None):
+def sort_extracted_item(raw_ai_text: str):
     if not raw_ai_text: return {"routing": "QUARANTINE_INBOX", "raw_text": "Unknown", "confidence_score": 0}
-
-    normalized = raw_ai_text.strip().lower()
-
-    # ── STEP 1: Check this shop's saved training signals first ────────────────
-    # If owner already manually mapped this OCR text before, use that mapping
-    # instantly — no fuzzy matching needed
-    if shop_id:
-        try:
-            container = db.get_training_container()
-            query = """
-                SELECT c.mapped_uid, c.mapped_to
-                FROM c
-                WHERE c.type = 'training_signal'
-                  AND c.shop_id = @shop_id
-                  AND LOWER(c.raw_ocr) = @raw_ocr
-            """
-            params = [
-                {"name": "@shop_id", "value": shop_id},
-                {"name": "@raw_ocr",  "value": normalized}
-            ]
-            results = list(container.query_items(
-                query=query,
-                parameters=params,
-                enable_cross_partition_query=True
-            ))
-            if results:
-                hit = results[0]
-                print(f"🧠 Training hit: '{raw_ai_text}' → '{hit['mapped_to']}' (learned from owner)")
-                return {
-                    "routing": "CLEAN_INVENTORY",
-                    "uid": hit["mapped_uid"],
-                    "standard_name": hit["mapped_to"],
-                    "confidence_score": 100,
-                    "source": "training"
-                }
-        except Exception as e:
-            print(f"Training signal lookup failed (non-critical): {e}")
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # ── STEP 2: Fall back to master catalog fuzzy match ───────────────────────
-    best_match, score = process.extractOne(normalized, ALL_ALIASES)
+    best_match, score = process.extractOne(raw_ai_text.lower(), ALL_ALIASES)
     if score >= 88:
         for uid, data in MASTER_DICTIONARY.items():
-            if best_match in data["aliases"]: return {"routing": "CLEAN_INVENTORY", "uid": uid, "standard_name": data["en"], "confidence_score": score}
+            if best_match in data["aliases"]: return {"routing": "CLEAN_INVENTORY", "uid": uid, "standard_name": raw_ai_text.strip(), "confidence_score": score}
     return {"routing": "QUARANTINE_INBOX", "raw_text": raw_ai_text, "confidence_score": score}
 
 def safe_float(value, default=1.0):
@@ -127,34 +78,15 @@ async def process_ledger(
             print(f"Idempotency Triggered: Scan {scan_id} already processed. Returning 200 OK.")
             return {"status": "success", "message": "Already processed", "data": {"clean_inventory": [], "quarantined": []}}
 
-    # --- 2. BUSINESS GATEKEEPER (plan-aware) ---
+    # --- 2. BUSINESS GATEKEEPER ---
     current_month = datetime.now(timezone.utc).strftime("%Y-%m")
     usage_doc_id = f"usage_{shop_id}_{current_month}"
-
-    # Fetch shop plan and usage in parallel queries
-    plan_query = "SELECT c.plan FROM c WHERE c.shop_id = @shop_id AND c.type = 'shop_account'"
-    plan_records = list(container.query_items(
-        query=plan_query,
-        parameters=[{"name": "@shop_id", "value": shop_id}],
-        enable_cross_partition_query=True
-    ))
-    shop_plan = plan_records[0].get("plan", "free") if plan_records else "free"
-
     usage_query = "SELECT c.scans_this_month FROM c WHERE c.id = @usage_id AND c.type = 'usage'"
-    usage_records = list(container.query_items(
-        query=usage_query,
-        parameters=[{"name": "@usage_id", "value": usage_doc_id}],
-        enable_cross_partition_query=True
-    ))
+    usage_records = list(container.query_items(query=usage_query, parameters=[{"name": "@usage_id", "value": usage_doc_id}], enable_cross_partition_query=True))
     current_scans = usage_records[0].get("scans_this_month", 0) if usage_records else 0
 
-    # Plan limits — pro is unlimited (None)
-    scan_limit = PLAN_LIMITS.get(shop_plan)
-    if scan_limit is not None and current_scans >= scan_limit:
-        raise HTTPException(
-            status_code=403,
-            detail=f"SCAN_LIMIT_EXCEEDED|plan={shop_plan}|used={current_scans}|limit={scan_limit}"
-        )
+    if current_scans >= 50:
+        raise HTTPException(status_code=403, detail="FREE_TIER_EXCEEDED")
 
     # --- 3. ARCHIVE ---
     image_bytes = await file.read()
@@ -217,7 +149,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
             unit = str(item.get("unit", "unit"))
             qty_math = qty if scan_type == "IN" else -qty
 
-            sort_result = sort_extracted_item(raw_name, shop_id)
+            sort_result = sort_extracted_item(raw_name)
             uid_to_update, standard_name_to_use = None, None
 
             if sort_result["routing"] == "CLEAN_INVENTORY":
@@ -378,7 +310,7 @@ def sync_mapped_item(payload: MappedItemPayload, current_shop: dict = Depends(ge
         # This data trains future matching models — never delete these records
         if payload.raw_text and payload.raw_text.strip() and payload.raw_text.strip().lower() != payload.standard_name.strip().lower():
             try:
-                db.get_training_container().create_item(body={
+                container.create_item(body={
                     "id": str(uuid.uuid4()),
                     "type": "training_signal",
                     "shop_id": payload.shop_id,
@@ -398,7 +330,7 @@ def sync_mapped_item(payload: MappedItemPayload, current_shop: dict = Depends(ge
         print(f"Sync mapped item error: {e}")
         raise HTTPException(status_code=500, detail="Sync failed.")
 
-class CustomItemPayload(BaseModel): shop_id: str; custom_name: str; quantity: float; unit: str; scan_type: str; raw_text: str = ""
+class CustomItemPayload(BaseModel): shop_id: str; custom_name: str; quantity: float; unit: str; scan_type: str
 
 @app.post("/create-custom-item")
 def create_custom_item(payload: CustomItemPayload, current_shop: dict = Depends(get_current_shop)):
@@ -455,28 +387,6 @@ def create_custom_item(payload: CustomItemPayload, current_shop: dict = Depends(
             "last_updated": datetime.now(timezone.utc).isoformat()
         }
         container.create_item(body=new_item)
-
-        # ── TRAINING SIGNAL ───────────────────────────────────────────────────
-        print(f"🔍 Training check: raw_text='{payload.raw_text}' custom='{payload.custom_name}'")
-        raw = payload.raw_text.strip() if payload.raw_text else ""
-        mapped = payload.custom_name.strip()
-        if raw and raw.lower() != mapped.lower():
-            try:
-                db.get_training_container().create_item(body={
-                    "id": str(uuid.uuid4()),
-                    "type": "training_signal",
-                    "shop_id": payload.shop_id,
-                    "raw_ocr": raw,
-                    "mapped_to": mapped,
-                    "mapped_uid": custom_uid,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                })
-                print(f"🧠 Training signal saved: '{raw}' → '{mapped}'")
-            except Exception as te:
-                print(f"❌ Training signal failed: {te}")
-        else:
-            print(f"⚠️ Skipped: raw='{raw}' mapped='{mapped}'")
-        # ─────────────────────────────────────────────────────────────────────
 
         return {
             "status": "success",
@@ -555,44 +465,6 @@ def get_inventory(shop_id: str = Query("shop_10065")):
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to fetch.")
 
-# ── USAGE ENDPOINT — powers the scan counter on HomeScreen ───────────────────
-@app.get("/auth/usage")
-def get_usage(current_shop: dict = Depends(get_current_shop)):
-    """
-    Returns current month scan usage + plan limit for the authenticated shop.
-    Called by HomeScreen on every focus to show the scan counter.
-    """
-    shop_id = current_shop["shop_id"]
-    container = db.get_container()
-    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
-
-    # Get plan
-    plan_records = list(container.query_items(
-        query="SELECT c.plan FROM c WHERE c.shop_id = @shop_id AND c.type = 'shop_account'",
-        parameters=[{"name": "@shop_id", "value": shop_id}],
-        enable_cross_partition_query=True
-    ))
-    shop_plan = plan_records[0].get("plan", "free") if plan_records else "free"
-
-    # Get usage
-    usage_doc_id = f"usage_{shop_id}_{current_month}"
-    usage_records = list(container.query_items(
-        query="SELECT c.scans_this_month FROM c WHERE c.id = @usage_id AND c.type = 'usage'",
-        parameters=[{"name": "@usage_id", "value": usage_doc_id}],
-        enable_cross_partition_query=True
-    ))
-    scans_used = usage_records[0].get("scans_this_month", 0) if usage_records else 0
-    scan_limit = PLAN_LIMITS.get(shop_plan)  # None = unlimited
-
-    return {
-        "status": "success",
-        "plan": shop_plan,
-        "scans_used": scans_used,
-        "scan_limit": scan_limit,      # null in JSON = unlimited (Pro)
-        "month": current_month
-    }
-# ─────────────────────────────────────────────────────────────────────────────
-
 # ── ANALYTICS ENDPOINT ────────────────────────────────────────────────────────
 # Thomas asked: "Can you see monthly active users on your app?"
 # This endpoint powers the admin dashboard
@@ -618,8 +490,8 @@ def get_analytics(month: str = Query(None)):
         total_items = items[0] if items else 0
 
         # 4. Training signals collected (labeled OCR pairs)
-        signals_query = "SELECT VALUE COUNT(1) FROM c"
-        signals = list(db.get_training_container().query_items(query=signals_query, enable_cross_partition_query=True))
+        signals_query = "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'training_signal'"
+        signals = list(container.query_items(query=signals_query, enable_cross_partition_query=True))
         total_signals = signals[0] if signals else 0
 
         # 5. Items currently in quarantine (needs review)

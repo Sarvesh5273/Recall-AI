@@ -4,10 +4,12 @@ import withObservables from '@nozbe/with-observables';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import { database } from '../database';
+import { useLanguage } from '../context/LanguageContext';
 import Quarantine from '../database/Quarantine';
 
 function InboxScreen({ quarantinedItems, navigation, route }: any) {
   const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
 
   useEffect(() => {
     if (route.params?.resolvedItemId) {
@@ -46,10 +48,10 @@ function InboxScreen({ quarantinedItems, navigation, route }: any) {
             <Text style={styles.typeText}>{item.scanType === 'IN' ? 'Restock' : 'Sale'}</Text>
           </View>
         </View>
-        <Text style={styles.warningTag}>Needs Review</Text>
+        <Text style={styles.warningTag}>{t('inbox_needs_review')}</Text>
       </View>
       
-      <Text style={styles.rawTextTitle}>AI Extracted:</Text>
+      <Text style={styles.rawTextTitle}>{t('inbox_ai_extracted')}</Text>
       <Text style={styles.rawText}>
         "{item.rawText}" <Text style={styles.quantityText}>({item.quantity} {item.unit})</Text>
       </Text>
@@ -57,11 +59,11 @@ function InboxScreen({ quarantinedItems, navigation, route }: any) {
       <View style={styles.buttonRow}>
         {/* THE GHOST BUTTON FIX */}
         <TouchableOpacity style={[styles.actionButton, styles.discardButton]} onPress={() => handleResolve(item, 'DISCARD')}>
-          <Text style={styles.discardButtonText}>Delete</Text>
+          <Text style={styles.discardButtonText}>{t('inbox_delete')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={[styles.actionButton, styles.matchButton]} onPress={() => handleResolve(item, 'MATCH')}>
-          <Text style={styles.matchButtonText}>Map Item</Text>
+          <Text style={styles.matchButtonText}>{t('inbox_map')}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -71,16 +73,16 @@ function InboxScreen({ quarantinedItems, navigation, route }: any) {
     <View style={styles.container}>
       <View style={[styles.headerBackground, { paddingTop: insets.top + 20 }]}>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Quarantine</Text>
-          <Text style={styles.headerSub}>Help the AI learn unknown items</Text>
+          <Text style={styles.headerTitle}>{t('inbox_title')}</Text>
+          <Text style={styles.headerSub}>{t('inbox_subtitle')}</Text>
         </View>
       </View>
 
       {quarantinedItems.length === 0 ? (
         <View style={styles.emptyState}>
           <Feather name="check-circle" size={60} color="#3B82F6" style={{ marginBottom: 16 }} />
-          <Text style={styles.emptyText}>All items mapped!</Text>
-          <Text style={styles.emptySub}>Your database is perfectly clean.</Text>
+          <Text style={styles.emptyText}>{t('inbox_empty')}</Text>
+          <Text style={styles.emptySub}>{t('inbox_empty_sub')}</Text>
         </View>
       ) : (
         <FlatList

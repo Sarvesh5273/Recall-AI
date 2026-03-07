@@ -4,11 +4,13 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import { API_BASE_URL } from '@env';
 
 export default function InventoryScreen() {
   const insets = useSafeAreaInsets();
   const { shopId } = useAuth();
+  const { t } = useLanguage();
   const [inventory, setInventory] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -83,7 +85,7 @@ export default function InventoryScreen() {
     <View style={styles.container}>
       <View style={[styles.headerBackground, { paddingTop: insets.top + 20 }]}>
         <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Live Vault</Text>
+          <Text style={styles.headerTitle}>{t('inventory_title')}</Text>
           <Text style={styles.headerSub}>Total SKUs: {inventory.length}</Text>
         </View>
       </View>
@@ -103,8 +105,8 @@ export default function InventoryScreen() {
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Feather name="package" size={60} color="#94A3B8" style={{ marginBottom: 16 }} />
-              <Text style={styles.emptyText}>Vault is Empty</Text>
-              <Text style={styles.emptySub}>Scan a wholesale invoice to build your inventory.</Text>
+              <Text style={styles.emptyText}>{t('inventory_empty')}</Text>
+              <Text style={styles.emptySub}>{t('inventory_empty_sub')}</Text>
             </View>
           }
         />
@@ -132,15 +134,15 @@ export default function InventoryScreen() {
                 <View style={styles.actionRow}>
                   {/* THE GHOST BUTTON FIX */}
                   <TouchableOpacity style={[styles.btn, styles.zeroBtn]} onPress={() => handleUpdateQuantity(0)} disabled={isUpdating}>
-                    <Text style={styles.zeroBtnText}>Zero Stock</Text>
+                    <Text style={styles.zeroBtnText}>{t('inventory_save').replace('Save','Zero Stock')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={[styles.btn, styles.saveBtn]} onPress={() => handleUpdateQuantity(parseFloat(editQuantity))} disabled={isUpdating}>
-                    {isUpdating ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save Update</Text>}
+                    {isUpdating ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{t('inventory_save')} Update</Text>}
                   </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity style={styles.closeArea} onPress={closeEditModal} disabled={isUpdating}>
-                  <Text style={styles.closeText}>Cancel</Text>
+                  <Text style={styles.closeText}>{t('inventory_cancel')}</Text>
                 </TouchableOpacity>
               </>
             )}

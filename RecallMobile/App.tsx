@@ -12,6 +12,7 @@ import { processOutboxQueue } from './src/utils/SyncWorker';
 
 // Auth
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
 import SendOTPScreen from './src/screens/auth/SendOTPScreen';
 import VerifyOTPScreen from './src/screens/auth/VerifyOTPScreen';
 import SetPINScreen from './src/screens/auth/SetPINScreen';
@@ -30,6 +31,7 @@ const Stack = createNativeStackNavigator();
 
 function TabNavigator() {
   const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -58,10 +60,10 @@ function TabNavigator() {
         }
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Inbox" component={InboxScreen} />
-      <Tab.Screen name="Inventory" component={InventoryScreen} />
-      <Tab.Screen name="Settings" component={SettingsScreen} />
+      <Tab.Screen name="Home" component={HomeScreen} options={{ title: t('tab_home') }} />
+      <Tab.Screen name="Inbox" component={InboxScreen} options={{ title: t('tab_inbox') }} />
+      <Tab.Screen name="Inventory" component={InventoryScreen} options={{ title: t('tab_inventory') }} />
+      <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: t('tab_settings') }} />
     </Tab.Navigator>
   );
 }
@@ -196,11 +198,13 @@ function RootNavigator() {
 export default function App() {
   return (
     <SafeAreaProvider>
+      <LanguageProvider>
       <AuthProvider>
         <DatabaseProvider database={database}>
           <RootNavigator />
         </DatabaseProvider>
       </AuthProvider>
+      </LanguageProvider>
     </SafeAreaProvider>
   );
 }
