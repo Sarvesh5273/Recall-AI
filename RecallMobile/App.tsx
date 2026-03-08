@@ -9,6 +9,7 @@ import { DatabaseProvider } from '@nozbe/watermelondb/DatabaseProvider';
 import { database } from './src/database';
 import { API_BASE_URL } from '@env';
 import { processOutboxQueue } from './src/utils/SyncWorker';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 // Auth
 import { AuthProvider, useAuth } from './src/context/AuthContext';
@@ -197,14 +198,16 @@ function RootNavigator() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <LanguageProvider>
-      <AuthProvider>
-        <DatabaseProvider database={database}>
-          <RootNavigator />
-        </DatabaseProvider>
-      </AuthProvider>
-      </LanguageProvider>
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <LanguageProvider>
+        <AuthProvider>
+          <DatabaseProvider database={database}>
+            <RootNavigator />
+          </DatabaseProvider>
+        </AuthProvider>
+        </LanguageProvider>
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }

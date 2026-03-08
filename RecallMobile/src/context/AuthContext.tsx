@@ -1,6 +1,57 @@
+// TODO: Migrate fetch() calls to use apiFetch() from ../utils/api for automatic 401 handling
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '@env';
+import { database } from '../database';
+
+// ── CATALOG SYNC ──────────────────────────────────────────────────────────────
+// Pulls master catalog from backend into WatermelonDB on login.
+// Version check prevents unnecessary re-syncs — only updates when catalog changes.
+// Survives uninstall: catalog restores from cloud on first login.
+const syncCatalogIfNeeded = async (token: string) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/master-catalog`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) return;
+
+    const json = await res.json();
+    const remoteVersion = json.version;
+    const localVersion = await AsyncStorage.getItem('catalog_version');
+
+    // Skip if already up to date — zero Cosmos cost
+    if (localVersion === remoteVersion) {
+      console.log(`Catalog up to date (v${remoteVersion}) — skipping sync`);
+      return;
+    }
+
+    // Write new catalog to WatermelonDB
+    const catalogCollection = database.get('catalog');
+    await database.write(async () => {
+      // Clear old catalog first
+      const existing = await catalogCollection.query().fetch();
+      for (const item of existing) {
+        await (item as any).destroyPermanently();
+      }
+      // Write fresh catalog
+      for (const item of json.data) {
+        await catalogCollection.create((record: any) => {
+          record._raw.id = item.uid;
+          record.uid = item.uid;
+          record.name = item.en;
+          record.aliases = JSON.stringify(item.aliases || []);
+        });
+      }
+    });
+
+    await AsyncStorage.setItem('catalog_version', remoteVersion);
+    console.log(`Catalog synced: ${json.total} items (v${remoteVersion})`);
+  } catch (err) {
+    // Non-critical — app still works with existing local catalog
+    console.warn('Catalog sync failed (non-critical):', err);
+  }
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface AuthState {
   token: string | null;
@@ -56,8 +107,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             plan: json.plan ?? 'free',
             isLoading: false,
             localPinSet: !!pin,
-            pinVerified: false,   // always false on fresh launch — must pass PIN lock
+            pinVerified: false,
           });
+          // Sync catalog in background on every app open
+          syncCatalogIfNeeded(token);
         } else {
           // Token expired or revoked
           await AsyncStorage.multiRemove(['recall_token', 'recall_shop_id', 'recall_shop_name', 'recall_phone']);
@@ -80,8 +133,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       token,
       shopId,
       shopName,
-      // pinVerified stays false — after login, user must set/enter PIN
     }));
+    // Sync catalog in background — non-blocking, won't delay login
+    syncCatalogIfNeeded(token);
   };
 
   const logout = async () => {

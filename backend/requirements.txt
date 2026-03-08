@@ -4,6 +4,7 @@
 # ── Web Framework ─────────────────────────────────────────────────────────────
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
+gunicorn==22.0.0                     # Production ASGI server (use with uvicorn workers)
 
 # ── Azure SDKs ────────────────────────────────────────────────────────────────
 azure-cosmos==4.6.0                  # Cosmos DB NoSQL
@@ -20,6 +21,11 @@ httpx==0.27.0                        # Async HTTP — Sarvam Vision OCR calls
 # ── Fuzzy Matching ────────────────────────────────────────────────────────────
 thefuzz==0.22.1                      # Fuzzy string match for item names
 python-Levenshtein==0.25.1           # Speed up thefuzz
+
+# ── Resilience & Observability ────────────────────────────────────────────────
+tenacity==9.0.0                      # Retry with backoff for external API calls
+sentry-sdk[fastapi]==2.14.0         # Error tracking and performance monitoring
+python-json-logger==2.0.7           # Structured JSON logging for production
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 python-dotenv==1.0.1                 # Load .env file locally

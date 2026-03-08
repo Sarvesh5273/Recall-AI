@@ -1,10 +1,13 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import os
 import httpx
 import json
 import uuid
 import time
+import logging
+import sentry_sdk
 from datetime import datetime, timezone
 from openai import AzureOpenAI
 from dotenv import load_dotenv
@@ -12,6 +15,52 @@ from azure.storage.blob import BlobServiceClient
 from pydantic import BaseModel
 from database import db
 from auth import router as auth_router, get_current_shop
+from payments import router as payments_router
+from circuit_breaker import sarvam_circuit, openai_circuit
+
+# ── SENTRY (Error Tracking) ─────────────────────────────────────────────────
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=0.2,
+        environment=os.getenv("ENV", "development"),
+    )
+
+logger = logging.getLogger(__name__)
+
+# ── RATE LIMITER ─────────────────────────────────────────────────────────────
+from collections import defaultdict
+import threading
+
+_rate_store: dict = defaultdict(lambda: {"window_start": 0.0, "count": 0})
+_rate_lock = threading.Lock()
+
+RATE_LIMITS = {
+    "process-ledger":     {"requests": 5,  "window": 60},
+    "sync-mapped-item":   {"requests": 30, "window": 60},
+    "create-custom-item": {"requests": 20, "window": 60},
+    "adjust-inventory":   {"requests": 30, "window": 60},
+    "default":            {"requests": 60, "window": 60},
+}
+
+PLAN_MONTHLY_LIMITS = {"free": 60, "basic": 300, "pro": None}
+
+def check_rate_limit(shop_id: str, endpoint: str):
+    limit = RATE_LIMITS.get(endpoint, RATE_LIMITS["default"])
+    key = f"{shop_id}:{endpoint}"
+    now = time.time()
+    with _rate_lock:
+        entry = _rate_store[key]
+        if now - entry["window_start"] > limit["window"]:
+            entry["window_start"] = now
+            entry["count"] = 0
+        entry["count"] += 1
+        count = entry["count"]
+    if count > limit["requests"]:
+        retry = int(limit["window"] - (time.time() - _rate_store[key]["window_start"]))
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Max {limit['requests']} req/min. Retry in {retry}s.")
+# ─────────────────────────────────────────────────────────────────────────────
 
 # 1. Environment Initialization
 load_dotenv() 
@@ -32,11 +81,61 @@ blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CON
 blob_container_client = blob_service_client.get_container_client(CONTAINER_NAME)
 
 app = FastAPI(title="Recall AI Enterprise Engine", version="5.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-# TODO: Lock CORS to app domain post-deployment: allow_origins=["https://your-domain.com"]
+
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:8081").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Register auth routes
 app.include_router(auth_router)
+app.include_router(payments_router)
+
+# ── HEALTH CHECK ─────────────────────────────────────────────────────────────
+@app.get("/health")
+def health_check():
+    checks = {}
+    healthy = True
+
+    # Cosmos DB
+    try:
+        container = db.get_container()
+        list(container.query_items(query="SELECT VALUE 1", enable_cross_partition_query=True, max_item_count=1))
+        checks["cosmos_db"] = "ok"
+    except Exception as e:
+        checks["cosmos_db"] = f"error: {type(e).__name__}"
+        healthy = False
+
+    # Master catalog loaded
+    checks["master_catalog"] = "ok" if _catalog_list and len(_catalog_list) > 0 else "error: not loaded"
+    if checks["master_catalog"] != "ok":
+        healthy = False
+
+    # Azure Blob Storage
+    try:
+        blob_container_client.get_container_properties()
+        checks["blob_storage"] = "ok"
+    except Exception as e:
+        checks["blob_storage"] = f"error: {type(e).__name__}"
+        healthy = False
+
+    return JSONResponse(
+        status_code=200 if healthy else 503,
+        content={
+            "status": "healthy" if healthy else "degraded",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "checks": checks,
+            "circuits": {
+                "sarvam_ocr": sarvam_circuit.status(),
+                "azure_openai": openai_circuit.status(),
+            },
+        },
+    )
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Load master catalog from file — edit master_catalog.json to add new items, never touch this file
 _catalog_path = os.path.join(os.path.dirname(__file__), "master_catalog.json")
@@ -68,7 +167,7 @@ def sort_extracted_item(raw_ai_text: str, shop_id: str = None):
             ))
             if results:
                 hit = results[0]
-                print(f"🧠 Training hit: '{raw_ai_text}' → '{hit['mapped_to']}' (learned from owner)")
+                logger.info(f"Training hit: '{raw_ai_text}' → '{hit['mapped_to']}' (learned from owner)")
                 return {
                     "routing": "CLEAN_INVENTORY",
                     "uid": hit["mapped_uid"],
@@ -77,7 +176,7 @@ def sort_extracted_item(raw_ai_text: str, shop_id: str = None):
                     "source": "training"
                 }
         except Exception as e:
-            print(f"Training signal lookup failed (non-critical): {e}")
+            logger.warning(f"Training signal lookup failed (non-critical): {e}")
     # ─────────────────────────────────────────────────────────────────────────
 
     # ── STEP 2: GPT-4o mini — multilingual semantic match ────────────────────
@@ -85,7 +184,7 @@ def sort_extracted_item(raw_ai_text: str, shop_id: str = None):
     # GPT understands Gujarati/Hindi/Marathi natively — far more accurate.
     # Only fires when training signal misses → cost is ~₹0.008 per uncertain item.
     try:
-        catalog_list = [{"uid": uid, "name": data["en"]} for uid, data in MASTER_DICTIONARY.items()]
+        catalog_list = [{"uid": uid, "name": data["en"], "aliases": data.get("aliases", [])} for uid, data in MASTER_DICTIONARY.items()]
         catalog_str = json.dumps(catalog_list, ensure_ascii=False)
 
         gpt_match = azure_ai_client.chat.completions.create(
@@ -98,9 +197,12 @@ return ONLY a JSON object with:
 - "confidence": a number 0-100
 
 Rules:
-- Match by meaning, not spelling (e.g. "ખાંડ" = Sugar, "चावल" = Rice, "khand" = Sugar, "mithu" = Salt)
-- Only return a uid if you are confident (confidence >= 85)
-- If ambiguous or genuinely not in catalog, return uid: "unknown"
+- Match against both "name" AND "aliases" in the catalog
+- Aliases include regional spellings: "khand","chini","ખાંડ","साखर" all match Sugar
+- "दही" matches alias "दही" in Curd, "mithu" matches Salt, "ઘઉં" matches Wheat
+- Only return a uid from this catalog — NEVER guess outside the list
+- Only return a uid if confident (confidence >= 85)
+- If ambiguous or not in catalog → return uid: "unknown"
 - Return ONLY the JSON object, nothing else"""},
                 {"role": "user", "content": f"Product: \"{raw_ai_text}\"\nCatalog: {catalog_str}"}
             ],
@@ -113,7 +215,7 @@ Rules:
         matched_uid = result.get("uid", "unknown")
         confidence = result.get("confidence", 0)
 
-        print(f"🤖 GPT match: '{raw_ai_text}' → uid={matched_uid} confidence={confidence}")
+        logger.info(f"GPT match: '{raw_ai_text}' → uid={matched_uid} confidence={confidence}")
 
         if matched_uid != "unknown" and matched_uid in MASTER_DICTIONARY and confidence >= 85:
             return {
@@ -124,7 +226,7 @@ Rules:
                 "source": "gpt"
             }
     except Exception as e:
-        print(f"GPT match failed (non-critical): {e}")
+        logger.warning(f"GPT match failed (non-critical): {e}")
     # ─────────────────────────────────────────────────────────────────────────
 
     # ── STEP 3: QUARANTINE ────────────────────────────────────────────────────
@@ -144,6 +246,7 @@ async def process_ledger(
     current_shop: dict = Depends(get_current_shop)
 ):
     shop_id = current_shop["shop_id"]
+    check_rate_limit(shop_id, "process-ledger")
     container = db.get_container()
     
     # --- 1. BACKEND IDEMPOTENCY GATEKEEPER ---
@@ -151,7 +254,7 @@ async def process_ledger(
         idem_query = "SELECT * FROM c WHERE c.id = @scan_id AND c.shop_id = @shop AND c.type = 'processed_scan'"
         existing_scans = list(container.query_items(query=idem_query, parameters=[{"name": "@scan_id", "value": scan_id}, {"name": "@shop", "value": shop_id}], enable_cross_partition_query=True))
         if existing_scans:
-            print(f"Idempotency Triggered: Scan {scan_id} already processed. Returning 200 OK.")
+            logger.info(f"Idempotency Triggered: Scan {scan_id} already processed. Returning 200 OK.")
             return {"status": "success", "message": "Already processed", "data": {"clean_inventory": [], "quarantined": []}}
 
     # --- 2. BUSINESS GATEKEEPER ---
@@ -161,27 +264,38 @@ async def process_ledger(
     usage_records = list(container.query_items(query=usage_query, parameters=[{"name": "@usage_id", "value": usage_doc_id}], enable_cross_partition_query=True))
     current_scans = usage_records[0].get("scans_this_month", 0) if usage_records else 0
 
-    if current_scans >= 50:
-        raise HTTPException(status_code=403, detail="FREE_TIER_EXCEEDED")
+    plan = current_shop.get("plan", "free")
+    monthly_limit = PLAN_MONTHLY_LIMITS.get(plan, 60)
+    if monthly_limit is not None and current_scans >= monthly_limit:
+        raise HTTPException(status_code=403, detail=f"MONTHLY_LIMIT_EXCEEDED:{plan.upper()}:{monthly_limit}")
 
     # --- 3. ARCHIVE ---
     image_bytes = await file.read()
     unique_filename = f"{shop_id}_{uuid.uuid4().hex}_{file.filename}"
     try:
         blob_container_client.get_blob_client(unique_filename).upload_blob(image_bytes, overwrite=True)
-    except Exception as e: print(f"Blob Warning: {e}")
+    except Exception as e: logger.warning(f"Blob warning: {e}")
 
     # --- 4. AI PIPELINE ---
     try:
+        if not sarvam_circuit.is_available():
+            raise HTTPException(status_code=503, detail="Sarvam OCR temporarily unavailable (circuit open)")
+
         files = {"file": (file.filename, image_bytes, file.content_type)}
         async with httpx.AsyncClient() as client:
             t_sarvam = time.time()
             response = await client.post(SARVAM_API_URL, headers=SARVAM_HEADERS, files=files, data={"prompt_type": "default_ocr"}, timeout=45.0)
-            print(f"⏱ Sarvam OCR: {time.time()-t_sarvam:.2f}s")
-        if response.status_code != 200: raise HTTPException(status_code=500, detail="Sarvam Failed")
+            logger.info(f"Sarvam OCR: {time.time()-t_sarvam:.2f}s")
+        if response.status_code != 200:
+            sarvam_circuit.record_failure()
+            raise HTTPException(status_code=500, detail="Sarvam Failed")
+        sarvam_circuit.record_success()
         
         raw_markdown = response.json().get("message", response.json().get("text", str(response.json())))
         
+        if not openai_circuit.is_available():
+            raise HTTPException(status_code=503, detail="OpenAI temporarily unavailable (circuit open)")
+
         t_gpt = time.time()
         gpt_response = azure_ai_client.chat.completions.create(
             model="gpt-4o-mini",
@@ -201,15 +315,16 @@ If the same item appears multiple times with the same unit, sum the quantities a
             ],
             response_format={"type": "json_object"}, temperature=0.1
         )
-        print(f"⏱ GPT-4o-mini: {time.time()-t_gpt:.2f}s")
+        logger.info(f"GPT-4o-mini: {time.time()-t_gpt:.2f}s")
+        openai_circuit.record_success()
         try:
             structured_items = json.loads(gpt_response.choices[0].message.content).get("items", [])
             if not isinstance(structured_items, list):
                 structured_items = []
         except (json.JSONDecodeError, AttributeError) as parse_err:
-            print(f"⚠️ GPT parse error: {parse_err} — raw: {gpt_response.choices[0].message.content}")
+            logger.warning(f"GPT parse error: {parse_err} — raw: {gpt_response.choices[0].message.content}")
             structured_items = []
-        print(f"📦 Extracted {len(structured_items)} items: {structured_items}")
+        logger.info(f"Extracted {len(structured_items)} items: {structured_items}")
         
         custom_items_query = "SELECT c.uid, c.standard_name FROM c WHERE c.shop_id = @shop AND STARTSWITH(c.uid, 'custom_') AND c.status = 'active' AND c.type = 'inventory'"
         custom_items = list(container.query_items(query=custom_items_query, parameters=[{"name": "@shop", "value": shop_id}], enable_cross_partition_query=True))
@@ -246,7 +361,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
                     prev_unit = processed_in_batch[uid_to_update]
                     if prev_unit == unit.lower().strip():
                         # Same item, same unit — merge into previous entry, skip this one
-                        print(f"⚠️ Dedup: '{raw_name}' already processed this batch, merging qty")
+                        logger.warning(f"Dedup: '{raw_name}' already processed this batch, merging qty")
                         # Update the already-queued qty by patching the Cosmos record again
                         # Just quarantine with a note — safer than double-patching
                         results["quarantined"].append({
@@ -343,7 +458,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
 
     except HTTPException as e: raise e
     except Exception as e:
-        print(f"Pipeline Error: {e}")
+        logger.error(f"Pipeline error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 class MappedItemPayload(BaseModel): 
@@ -357,6 +472,7 @@ class MappedItemPayload(BaseModel):
 
 @app.post("/sync-mapped-item")
 def sync_mapped_item(payload: MappedItemPayload, current_shop: dict = Depends(get_current_shop)):
+    check_rate_limit(payload.shop_id, "sync-mapped-item")
     if payload.shop_id != current_shop["shop_id"]:
         raise HTTPException(status_code=403, detail="Shop ID mismatch.")
     try:
@@ -395,22 +511,24 @@ def sync_mapped_item(payload: MappedItemPayload, current_shop: dict = Depends(ge
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
                 db.get_training_container().create_item(body=training_doc)
-                print(f"🧠 Training signal saved: '{payload.raw_text}' → '{payload.standard_name}'")
+                logger.info(f"Training signal saved: '{payload.raw_text}' → '{payload.standard_name}'")
             except Exception as te:
-                print(f"Training signal write failed: {te}")
-                raise HTTPException(status_code=500, detail=f"Training write failed: {str(te)}")
+                # Non-critical — inventory already saved, log and continue
+                logger.warning(f"Training signal write failed (non-critical): {te}")
         # ────────────────────────────────────────────────────────────────────
 
         return {"status": "success", "message": "Synced"}
 
+    except HTTPException as e: raise e
     except Exception as e:
-        print(f"Sync mapped item error: {e}")
+        logger.error(f"Sync mapped item error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Sync failed.")
 
 class CustomItemPayload(BaseModel): shop_id: str; custom_name: str; quantity: float; unit: str; scan_type: str
 
 @app.post("/create-custom-item")
 def create_custom_item(payload: CustomItemPayload, current_shop: dict = Depends(get_current_shop)):
+    check_rate_limit(payload.shop_id, "create-custom-item")
     if payload.shop_id != current_shop["shop_id"]:
         raise HTTPException(status_code=403, detail="Shop ID mismatch.")
     try:
@@ -472,7 +590,7 @@ def create_custom_item(payload: CustomItemPayload, current_shop: dict = Depends(
         }
 
     except Exception as e:
-        print(f"Custom Item Error: {e}")
+        logger.error(f"Custom item error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to create custom item.")
 
 
@@ -480,6 +598,7 @@ class AdjustInventoryPayload(BaseModel): shop_id: str; uid: str; new_quantity: f
 
 @app.post("/adjust-inventory")
 def adjust_inventory(payload: AdjustInventoryPayload, current_shop: dict = Depends(get_current_shop)):
+    check_rate_limit(payload.shop_id, "adjust-inventory")
     if payload.shop_id != current_shop["shop_id"]:
         raise HTTPException(status_code=403, detail="Shop ID mismatch.")
     try:
@@ -511,12 +630,13 @@ def adjust_inventory(payload: AdjustInventoryPayload, current_shop: dict = Depen
 
     except HTTPException as e: raise e
     except Exception as e:
-        print(f"Adjust Inventory Error: {e}")
+        logger.error(f"Adjust inventory error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to adjust inventory.")
 
 
 @app.get("/sync-custom-dictionary")
 def sync_custom_dictionary(current_shop: dict = Depends(get_current_shop)):
+    check_rate_limit(current_shop["shop_id"], "default")
     shop_id = current_shop["shop_id"]
     try:
         container = db.get_container()
@@ -533,7 +653,7 @@ def sync_custom_dictionary(current_shop: dict = Depends(get_current_shop)):
 
 # Ensure /inventory and other endpoints use AND c.type = 'inventory'
 @app.get("/inventory")
-def get_inventory(shop_id: str = Query("shop_10065")):
+def get_inventory(shop_id: str = Query("shop_10065"), current_shop: dict = Depends(get_current_shop)):
     try:
         container = db.get_container()
         query = "SELECT c.uid, c.standard_name, c.quantity, c.unit, c.last_updated FROM c WHERE c.shop_id = @shop AND c.status = 'active' AND c.type = 'inventory'"
@@ -545,8 +665,24 @@ def get_inventory(shop_id: str = Query("shop_10065")):
 # ── ANALYTICS ENDPOINT ────────────────────────────────────────────────────────
 # Thomas asked: "Can you see monthly active users on your app?"
 # This endpoint powers the admin dashboard
+@app.get("/master-catalog")
+def get_master_catalog(current_shop: dict = Depends(get_current_shop)):
+    """
+    Returns the full master catalog + a version hash.
+    Mobile checks version first — only re-syncs if catalog changed.
+    Version is a hash of the catalog content, so it auto-updates when you edit master_catalog.json.
+    """
+    import hashlib
+    catalog_version = hashlib.md5(json.dumps(_catalog_list, sort_keys=True).encode()).hexdigest()[:8]
+    return {
+        "status": "success",
+        "version": catalog_version,
+        "total": len(_catalog_list),
+        "data": _catalog_list
+    }
+
 @app.get("/analytics")
-def get_analytics(month: str = Query(None)):
+def get_analytics(month: str = Query(None), current_shop: dict = Depends(get_current_shop)):
     try:
         container = db.get_container()
         current_month = month or datetime.now(timezone.utc).strftime("%Y-%m")
@@ -588,6 +724,6 @@ def get_analytics(month: str = Query(None)):
             }
         }
     except Exception as e:
-        print(f"Analytics Error: {e}")
+        logger.error(f"Analytics error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch analytics.")
 # ─────────────────────────────────────────────────────────────────────────────

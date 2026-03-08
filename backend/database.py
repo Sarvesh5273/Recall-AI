@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from dotenv import load_dotenv
 from azure.cosmos import CosmosClient, PartitionKey, exceptions
 
@@ -7,6 +8,23 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def cosmos_retry(func):
+    """Decorator that retries Cosmos DB operations on 429 throttling."""
+    def wrapper(*args, **kwargs):
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except exceptions.CosmosHttpResponseError as e:
+                if e.status_code == 429 and attempt < max_retries - 1:
+                    retry_after = int(e.headers.get("x-ms-retry-after-ms", 1000)) / 1000
+                    logger.warning(f"Cosmos DB throttled (429). Retry {attempt + 1}/{max_retries} after {retry_after:.1f}s")
+                    time.sleep(retry_after)
+                else:
+                    raise
+    return wrapper
 
 class CosmosDBConnector:
     _instance = None

@@ -1,3 +1,4 @@
+// TODO: Migrate fetch() calls to use apiFetch() from ./api for automatic 401 handling
 import { database } from '../database';
 import PendingScan from '../database/PendingScan';
 import Quarantine from '../database/Quarantine';
@@ -5,8 +6,9 @@ import { API_BASE_URL } from '@env';
 import { Q } from '@nozbe/watermelondb';
 import RNFS from 'react-native-fs';
 import Fuse from 'fuse.js';
-import masterDictionary from '../data/master_seed.json';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// master_seed.json removed — catalog is now in WatermelonDB (synced from backend)
 
 const MAX_RETRIES = 5;
 const AUTO_MATCH_THRESHOLD = 0.35;
@@ -14,11 +16,11 @@ const AUTO_MATCH_THRESHOLD = 0.35;
 let isSyncProcessing = false;
 
 // ─── LOCAL EDGE MATCHER ───────────────────────────────────────────────────────
-// Runs entirely on-device. Checks quarantined item against:
-// 1. master_seed.json (static dictionary)
-// 2. custom_skus in WatermelonDB (user-trained items like "Milk")
-// If match found → silently syncs via /sync-mapped-item
-// If no match → goes to quarantine inbox for manual review
+// Runs entirely on-device against custom_skus only.
+// master_seed removed: Fuse on OCR text vs English catalog is unreliable for
+// regional languages (Hindi/Gujarati/Marathi) — GPT on backend handles that.
+// This only catches OCR variations of items the owner has already taught the app,
+// e.g. "khond" matching a saved custom SKU "khand" → Sugar.
 const tryLocalAutoMatch = async (
   rawText: string,
   quantity: number,
@@ -30,18 +32,17 @@ const tryLocalAutoMatch = async (
   try {
     const localCustoms = await database.get('custom_skus').query().fetch();
 
-    const combinedData = [
-      ...masterDictionary,
-      ...localCustoms.map((c: any) => ({
-        uid: c.uid,
-        name: c.standard_name,
-        native: 'Custom Item',
-        aliases: [c.standard_name.toLowerCase()],
-      })),
-    ];
+    // Only match against custom SKUs — items owner explicitly named themselves
+    if (localCustoms.length === 0) return false;
 
-    const fuse = new Fuse(combinedData, {
-      keys: ['name', 'native', 'aliases'],
+    const customData = localCustoms.map((c: any) => ({
+      uid: c.uid,
+      name: c.standard_name,
+      aliases: [c.standard_name.toLowerCase()],
+    }));
+
+    const fuse = new Fuse(customData, {
+      keys: ['name', 'aliases'],
       threshold: AUTO_MATCH_THRESHOLD,
       includeScore: true,
     });

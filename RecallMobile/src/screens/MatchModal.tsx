@@ -4,13 +4,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import Fuse from 'fuse.js';
 
-// Secure Routing & Local DB
 import { API_BASE_URL } from '@env';
 import { useAuth } from '../context/AuthContext';
 import { database } from '../database';
 
-// 1. IMPORT THE STATIC MASTER DICTIONARY
-import masterDictionary from '../data/master_seed.json';
+// master_seed.json removed — catalog now lives in WatermelonDB, synced from backend on login
 
 export default function MatchModal({ route, navigation }: any) {
   const insets = useSafeAreaInsets();
@@ -21,43 +19,58 @@ export default function MatchModal({ route, navigation }: any) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [editableQuantity, setEditableQuantity] = useState(quantity ? quantity.toString() : '1');
+  const [catalogReady, setCatalogReady] = useState<boolean | null>(null); // null = not checked yet
 
   // THE HYBRID EDGE SEARCH
+  // Sources: WatermelonDB catalog (synced from backend) + custom_skus (this shop)
   const handleSearch = async (text: string) => {
     setSearchQuery(text);
-    
+
     if (text.length < 2) {
       setSearchResults([]);
       return;
     }
 
-    // A. Get custom items from local WatermelonDB cache
-    const localCustoms = await database.get('custom_skus').query().fetch();
-    
-    // B. Combine Static Seed with Custom Edge items
-    const combinedData = [
-      ...masterDictionary, 
-      ...localCustoms.map((c: any) => ({
-        uid: c.uid,
-        name: c.standard_name,
-        native: "My Custom Item",
-        aliases: [c.standard_name.toLowerCase()]
-      }))
-    ];
+    // A. Pull catalog from WatermelonDB (synced from backend on login)
+    const catalogItems = await database.get('catalog').query().fetch();
+    const catalogData = catalogItems.map((c: any) => ({
+      uid: c.uid,
+      name: c.name,
+      aliases: JSON.parse(c.aliases || '[]'),
+    }));
 
-    // C. Instant Fuzzy Match (0.1ms execution)
+    // If catalog is empty, sync hasn't completed yet — tell user and bail
+    // They can still create a custom item below
+    if (catalogData.length === 0) {
+      setCatalogReady(false);
+      setSearchResults([]);
+      return;
+    }
+    setCatalogReady(true);
+
+    // B. Pull custom items this shop has created
+    const localCustoms = await database.get('custom_skus').query().fetch();
+    const customData = localCustoms.map((c: any) => ({
+      uid: c.uid,
+      name: c.standard_name,
+      aliases: [c.standard_name.toLowerCase()],
+    }));
+
+    // C. Combine — custom items first so they appear at top when matched
+    const combinedData = [...customData, ...catalogData];
+
+    // D. Fuzzy search — user is typing manually so Fuse is reliable here
     const fuse = new Fuse(combinedData, {
-      keys: ['name', 'native', 'aliases'],
+      keys: ['name', 'aliases'],
       threshold: 0.3,
-      includeScore: true
+      includeScore: true,
     });
 
     const results = fuse.search(text);
     setSearchResults(results.slice(0, 5).map(r => ({
       uid: r.item.uid,
       name: r.item.name,
-      native: r.item.native,
-      match_score: Math.round((1 - (r.score || 0)) * 100)
+      match_score: Math.round((1 - (r.score || 0)) * 100),
     })));
   };
 
@@ -158,22 +171,21 @@ export default function MatchModal({ route, navigation }: any) {
   };
   
   const renderMasterItem = ({ item }: { item: any }) => (
-    <TouchableOpacity 
-      style={styles.matchCard} 
+    <TouchableOpacity
+      style={styles.matchCard}
       onPress={() => handleSelectMatch(item)}
       disabled={isSyncing}
     >
       <View style={{ flex: 1 }}>
         <Text style={styles.masterName}>{item.name}</Text>
-        <Text style={styles.nativeName}>{item.native}</Text>
       </View>
       <View style={styles.scoreBadge}>
         <Text style={styles.scoreText}>{item.match_score}% Match</Text>
       </View>
       {isSyncing ? (
-         <ActivityIndicator size="small" color="#3B82F6" style={{marginLeft: 10}} />
+        <ActivityIndicator size="small" color="#3B82F6" style={{ marginLeft: 10 }} />
       ) : (
-         <Feather name="chevron-right" size={20} color="#CBD5E1" />
+        <Feather name="chevron-right" size={20} color="#CBD5E1" />
       )}
     </TouchableOpacity>
   );
@@ -202,11 +214,11 @@ export default function MatchModal({ route, navigation }: any) {
           <Feather name="search" size={20} color="#94A3B8" style={{ marginRight: 10 }} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search offline dictionary..."
+            placeholder="Search items..."
             placeholderTextColor="#94A3B8"
             value={searchQuery}
             onChangeText={handleSearch}
-            autoFocus={false} 
+            autoFocus={false}
             autoCapitalize="none"
           />
         </View>
@@ -221,12 +233,22 @@ export default function MatchModal({ route, navigation }: any) {
         ListFooterComponent={
           searchQuery.trim().length >= 2 ? (
             <View style={styles.emptyContainer}>
-              {searchResults.length === 0 && (
-                <Text style={styles.emptyText}>No matching items found locally.</Text>
+              {/* Catalog not synced yet — shown only on very first login with slow network */}
+              {catalogReady === false && (
+                <View style={styles.syncWarning}>
+                  <Feather name="clock" size={16} color="#F59E0B" style={{ marginRight: 6 }} />
+                  <Text style={styles.syncWarningText}>
+                    Catalog is loading in background.{'\n'}You can still add a custom item below.
+                  </Text>
+                </View>
               )}
-              
-              <TouchableOpacity 
-                style={styles.createButton} 
+
+              {catalogReady === true && searchResults.length === 0 && (
+                <Text style={styles.emptyText}>No matching items found.</Text>
+              )}
+
+              <TouchableOpacity
+                style={styles.createButton}
                 onPress={handleCreateCustomItem}
                 disabled={isSyncing}
               >
@@ -273,6 +295,8 @@ const styles = StyleSheet.create({
   scoreText: { color: '#3B82F6', fontSize: 12, fontWeight: '800' },
   emptyContainer: { alignItems: 'center', marginTop: 20, paddingHorizontal: 10 },
   emptyText: { textAlign: 'center', color: '#64748B', fontSize: 14, marginBottom: 20, fontWeight: '500' },
+  syncWarning: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFBEB', borderRadius: 10, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: '#FDE68A', width: '100%' },
+  syncWarningText: { fontSize: 13, color: '#92400E', fontWeight: '500', flex: 1, lineHeight: 18 },
   createButton: { backgroundColor: '#3B82F6', width: '100%', paddingVertical: 18, borderRadius: 16, alignItems: 'center', shadowColor: '#3B82F6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
   createButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
   cancelButton: { marginHorizontal: 24, marginTop: 10, paddingVertical: 18, backgroundColor: 'transparent', borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },

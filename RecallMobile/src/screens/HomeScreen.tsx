@@ -74,7 +74,7 @@ export default function HomeScreen({ navigation }: any) {
   };
 
   useFocusEffect(useCallback(() => {
-    // Small delay so SyncWorker has time to write to Cosmos before we fetch
+    setIsLoading(true); // reset so spinner shows on re-focus
     const timer = setTimeout(() => fetchDashboardData(), 2000);
     return () => clearTimeout(timer);
   }, [shopId]));
@@ -116,9 +116,11 @@ export default function HomeScreen({ navigation }: any) {
             <View>
               <Text style={styles.usageTitle}>{t('home_scans_used')}</Text>
               <Text style={styles.usageCount}>
-                {isUnlimited
-                  ? `${scansUsed} used`
-                  : `${scansUsed} / ${scanLimit} used`
+                {isLoading
+                  ? '...'
+                  : isUnlimited
+                    ? `${scansUsed} used`
+                    : `${scansUsed} / ${scanLimit} used`
                 }
               </Text>
             </View>

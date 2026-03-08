@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const mySchema = appSchema({
-  version: 5, // Bumped for the Enterprise Queue
+  version: 6, // Bumped for catalog sync
   tables: [
     tableSchema({
       name: 'inventory',
@@ -43,6 +43,15 @@ export const mySchema = appSchema({
         { name: 'retry_count', type: 'number' }, // To prevent infinite loops on broken files
         { name: 'created_at', type: 'number' }, // For strict FIFO ordering
         { name: 'next_retry_at', type: 'number' }, // For exponential backoff retries
+      ],
+    }),
+    // Master catalog — synced from backend on login, survives uninstall
+    tableSchema({
+      name: 'catalog',
+      columns: [
+        { name: 'uid', type: 'string', isIndexed: true },
+        { name: 'name', type: 'string' },
+        { name: 'aliases', type: 'string' }, // JSON stringified array
       ],
     }),
   ],

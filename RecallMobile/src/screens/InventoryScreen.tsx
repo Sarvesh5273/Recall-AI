@@ -4,6 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import { useAuth } from '../context/AuthContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLanguage } from '../context/LanguageContext';
 import { API_BASE_URL } from '@env';
 
@@ -20,7 +21,9 @@ export default function InventoryScreen() {
 
   const fetchInventory = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/inventory?shop_id=${shopId}`);
+      const token = await AsyncStorage.getItem('recall_token');
+      const headers: any = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await fetch(`${API_BASE_URL}/inventory?shop_id=${shopId}`, { headers });
       if (!response.ok) throw new Error("Failed to fetch");
       const json = await response.json();
       if (json.status === "success") setInventory(json.data);
@@ -39,8 +42,11 @@ export default function InventoryScreen() {
     setIsUpdating(true);
     try {
       const payload = { shop_id: shopId ?? "", uid: selectedItem.uid, new_quantity: targetQuantity };
+      const token = await AsyncStorage.getItem('recall_token');
       const response = await fetch(`${API_BASE_URL}/adjust-inventory`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error("Failed to update Azure.");
       closeEditModal();

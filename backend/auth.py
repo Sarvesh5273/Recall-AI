@@ -12,7 +12,10 @@ router = APIRouter()
 security = HTTPBearer()
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
+_env = os.getenv("ENV", "development")
 JWT_SECRET = os.getenv("JWT_SECRET", "recall-ai-dev-secret-CHANGE-IN-PRODUCTION")
+if _env == "production" and JWT_SECRET == "recall-ai-dev-secret-CHANGE-IN-PRODUCTION":
+    raise RuntimeError("FATAL: JWT_SECRET must be set in production. Do not use the default.")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 30  # Stay logged in for 30 days
 
@@ -296,3 +299,36 @@ def get_me(current_shop: dict = Depends(get_current_shop)):
         "phone": accounts[0]["phone"],
         "plan": accounts[0].get("plan", "free")   # default "free" for older accounts
     }
+
+
+@router.get("/auth/usage")
+def get_usage(current_shop: dict = Depends(get_current_shop)):
+    """Returns current month scan count + plan limits for HomeScreen."""
+    try:
+        shop_id = current_shop["shop_id"]
+        plan = current_shop.get("plan", "free")
+        container = db.get_container()
+
+        from datetime import datetime, timezone
+        current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        usage_doc_id = f"usage_{shop_id}_{current_month}"
+
+        usage_records = list(container.query_items(
+            query="SELECT c.scans_this_month FROM c WHERE c.id = @id AND c.type = 'usage'",
+            parameters=[{"name": "@id", "value": usage_doc_id}],
+            enable_cross_partition_query=True
+        ))
+
+        scans_used = usage_records[0].get("scans_this_month", 0) if usage_records else 0
+        plan_limits = {"free": 60, "basic": 300, "pro": None}
+        scan_limit = plan_limits.get(plan, 60)
+
+        return {
+            "status": "success",
+            "plan": plan,
+            "scans_used": scans_used,
+            "scan_limit": scan_limit
+        }
+    except Exception as e:
+        print(f"Usage fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
