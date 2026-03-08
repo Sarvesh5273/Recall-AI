@@ -1,516 +1,152 @@
 [
-  {
-    "uid": "sku_0001",
-    "en": "Sugar",
-    "aliases": [
-      "sugar",
-      "khand",
-      "sakar",
-      "sakhar",
-      "shakar",
-      "chini",
-      "sakkare",
-      "साखर",
-      "સાકર"
-    ]
-  },
-  {
-    "uid": "sku_0002",
-    "en": "Wheat",
-    "aliases": [
-      "wheat",
-      "ghau",
-      "gehu",
-      "gahum",
-      "godhu",
-      "ઘઉં",
-      "गेहूं"
-    ]
-  },
-  {
-    "uid": "sku_0003",
-    "en": "Salt",
-    "aliases": [
-      "salt",
-      "tata salt",
-      "mith",
-      "namak",
-      "meetha",
-      "meeth",
-      "મીઠ",
-      "मीठ"
-    ]
-  },
-  {
-    "uid": "sku_0004",
-    "en": "Atta",
-    "aliases": [
-      "atta",
-      "flour",
-      "aashirvaad",
-      "ashirwad",
-      "pithe",
-      "aata",
-      "godhuno lot",
-      "આટો",
-      "आटा"
-    ]
-  },
-  {
-    "uid": "sku_0005",
-    "en": "Rice",
-    "aliases": [
-      "rice",
-      "basmati",
-      "taandul",
-      "chawal",
-      "tandul",
-      "chokha",
-      "bhat",
-      "ચોખા",
-      "तांदूळ"
-    ]
-  },
-  {
-    "uid": "sku_0006",
-    "en": "Toor Dal",
-    "aliases": [
-      "dal",
-      "toor dal",
-      "tuvar",
-      "daal",
-      "toor",
-      "tuvar dal",
-      "arhar",
-      "તુવેર",
-      "तूर"
-    ]
-  },
-  {
-    "uid": "sku_0007",
-    "en": "Maggi",
-    "aliases": [
-      "maggi",
-      "noodles",
-      "magi",
-      "maagi",
-      "noodls",
-      "મેગી",
-      "मॅगी"
-    ]
-  },
-  {
-    "uid": "sku_0008",
-    "en": "Parle-G",
-    "aliases": [
-      "parle",
-      "biscuit",
-      "parle g",
-      "parleg",
-      "biscuits",
-      "glucose biscuit",
-      "પાર્લે",
-      "पार्ले"
-    ]
-  },
-  {
-    "uid": "sku_0009",
-    "en": "Tea",
-    "aliases": [
-      "tea",
-      "chai",
-      "red label",
-      "patti",
-      "chaha",
-      "chaa",
-      "ચા",
-      "चहा"
-    ]
-  },
-  {
-    "uid": "sku_0010",
-    "en": "Soap",
-    "aliases": [
-      "soap",
-      "lifebuoy",
-      "saban",
-      "sabun",
-      "saboon",
-      "સાબુ",
-      "साबण"
-    ]
-  },
-  {
-    "uid": "sku_0011",
-    "en": "Milk",
-    "aliases": [
-      "milk",
-      "doodh",
-      "dudh",
-      "doodha",
-      "paal",
-      "દૂધ",
-      "दूध"
-    ]
-  },
-  {
-    "uid": "sku_0012",
-    "en": "Ghee",
-    "aliases": [
-      "ghee",
-      "ghi",
-      "toop",
-      "tuppa",
-      "ઘી",
-      "घी"
-    ]
-  },
-  {
-    "uid": "sku_0013",
-    "en": "Mustard Oil",
-    "aliases": [
-      "mustard oil",
-      "sarson tel",
-      "mohri tel",
-      "sarso",
-      "tel",
-      "तेल",
-      "તેલ"
-    ]
-  },
-  {
-    "uid": "sku_0014",
-    "en": "Sunflower Oil",
-    "aliases": [
-      "sunflower oil",
-      "surajmukhi tel",
-      "refined oil",
-      "cooking oil",
-      "sunflower"
-    ]
-  },
-  {
-    "uid": "sku_0015",
-    "en": "Chana Dal",
-    "aliases": [
-      "chana dal",
-      "chana",
-      "gram dal",
-      "channna",
-      "chickpea",
-      "ચણા",
-      "चना"
-    ]
-  },
-  {
-    "uid": "sku_0016",
-    "en": "Moong Dal",
-    "aliases": [
-      "moong dal",
-      "mug dal",
-      "mung",
-      "moong",
-      "green gram",
-      "મગ",
-      "मूग"
-    ]
-  },
-  {
-    "uid": "sku_0017",
-    "en": "Urad Dal",
-    "aliases": [
-      "urad dal",
-      "urad",
-      "black gram",
-      "adad",
-      "udad",
-      "અડદ",
-      "उड़द"
-    ]
-  },
-  {
-    "uid": "sku_0018",
-    "en": "Poha",
-    "aliases": [
-      "poha",
-      "pauwa",
-      "flattened rice",
-      "pohe",
-      "chidwa",
-      "પૌઆ",
-      "पोहे"
-    ]
-  },
-  {
-    "uid": "sku_0019",
-    "en": "Suji",
-    "aliases": [
-      "suji",
-      "rava",
-      "semolina",
-      "sooji",
-      "ravo",
-      "સૂજી",
-      "रवा"
-    ]
-  },
-  {
-    "uid": "sku_0020",
-    "en": "Besan",
-    "aliases": [
-      "besan",
-      "gram flour",
-      "chickpea flour",
-      "chana flour",
-      "બેસન",
-      "बेसन"
-    ]
-  },
-  {
-    "uid": "sku_0021",
-    "en": "Turmeric",
-    "aliases": [
-      "turmeric",
-      "haldi",
-      "haldar",
-      "halad",
-      "haldhar",
-      "હળદર",
-      "हळद"
-    ]
-  },
-  {
-    "uid": "sku_0022",
-    "en": "Red Chilli",
-    "aliases": [
-      "chilli",
-      "mirchi",
-      "lal mirch",
-      "red chilli",
-      "marchu",
-      "મરચું",
-      "मिरची"
-    ]
-  },
-  {
-    "uid": "sku_0023",
-    "en": "Coriander",
-    "aliases": [
-      "coriander",
-      "dhana",
-      "dhaniya",
-      "dhane",
-      "dhania",
-      "ધાણા",
-      "धने"
-    ]
-  },
-  {
-    "uid": "sku_0024",
-    "en": "Cumin",
-    "aliases": [
-      "cumin",
-      "jeera",
-      "jiru",
-      "zeera",
-      "jere",
-      "જીરું",
-      "जिरे"
-    ]
-  },
-  {
-    "uid": "sku_0025",
-    "en": "Mustard Seeds",
-    "aliases": [
-      "mustard seeds",
-      "rai",
-      "mohri",
-      "sarson",
-      "raai",
-      "રાઈ",
-      "मोहरी"
-    ]
-  },
-  {
-    "uid": "sku_0026",
-    "en": "Bournvita",
-    "aliases": [
-      "bournvita",
-      "bornvita",
-      "chocolate drink",
-      "bournvita powder",
-      "malt drink"
-    ]
-  },
-  {
-    "uid": "sku_0027",
-    "en": "Detergent",
-    "aliases": [
-      "surf",
-      "surf excel",
-      "detergent",
-      "washing powder",
-      "kapda powder",
-      "સર્ફ",
-      "सर्फ"
-    ]
-  },
-  {
-    "uid": "sku_0028",
-    "en": "Toothpaste",
-    "aliases": [
-      "colgate",
-      "toothpaste",
-      "paste",
-      "datmanjan",
-      "टूथपेस्ट",
-      "ટૂથપેસ્ટ"
-    ]
-  },
-  {
-    "uid": "sku_0029",
-    "en": "Dettol",
-    "aliases": [
-      "dettol",
-      "antiseptic soap",
-      "dettol soap",
-      "ડેટૉલ",
-      "डेटॉल"
-    ]
-  },
-  {
-    "uid": "sku_0030",
-    "en": "Coconut Oil",
-    "aliases": [
-      "coconut oil",
-      "nariyal tel",
-      "khobreyl tel",
-      "kopra tel",
-      "નારિયેળ",
-      "खोबरेल"
-    ]
-  },
-  {
-    "uid": "sku_0031",
-    "en": "Bread",
-    "aliases": [
-      "bread",
-      "bred",
-      "double roti",
-      "pav bread",
-      "બ્રેડ",
-      "ब्रेड"
-    ]
-  },
-  {
-    "uid": "sku_0032",
-    "en": "Butter",
-    "aliases": [
-      "butter",
-      "makhan",
-      "makkhan",
-      "amul butter",
-      "માખણ",
-      "मक्खन"
-    ]
-  },
-  {
-    "uid": "sku_0033",
-    "en": "Eggs",
-    "aliases": [
-      "egg",
-      "eggs",
-      "anda",
-      "inda",
-      "ande",
-      "ઈંડા",
-      "अंडे"
-    ]
-  },
-  {
-    "uid": "sku_0034",
-    "en": "Ketchup",
-    "aliases": [
-      "ketchup",
-      "sauce",
-      "tomato sauce",
-      "maggi sauce",
-      "ટૉમૅટો",
-      "टोमॅटो"
-    ]
-  },
-  {
-    "uid": "sku_0035",
-    "en": "Curd",
-    "aliases": [
-      "curd",
-      "dahi",
-      "dahee",
-      "yogurt",
-      "dahi packet",
-      "દહીં",
-      "दही"
-    ]
-  },
-  {
-    "uid": "sku_0036",
-    "en": "Honey",
-    "aliases": [
-      "honey",
-      "madh",
-      "shahad",
-      "मध",
-      "મધ"
-    ]
-  },
-  {
-    "uid": "sku_0037",
-    "en": "Maida",
-    "aliases": [
-      "maida",
-      "mendo",
-      "refined flour",
-      "all purpose flour",
-      "મેંદો",
-      "मैदा"
-    ]
-  },
-  {
-    "uid": "sku_0038",
-    "en": "Groundnut Oil",
-    "aliases": [
-      "groundnut oil",
-      "peanut oil",
-      "shengdane tel",
-      "magfali tel",
-      "mungfali tel",
-      "મગફળી",
-      "शेंगदाणे"
-    ]
-  },
-  {
-    "uid": "sku_0039",
-    "en": "Coconut",
-    "aliases": [
-      "coconut",
-      "nariyal",
-      "naral",
-      "kopru",
-      "નારિયેળ",
-      "नारळ"
-    ]
-  },
-  {
-    "uid": "sku_0040",
-    "en": "Onion",
-    "aliases": [
-      "onion",
-      "kanda",
-      "dungri",
-      "pyaz",
-      "डुंगळी",
-      "ડુંગળી",
-      "प्याज"
-    ]
-  }
+  {"uid": "sku_0001", "en": "Sugar", "aliases": ["sugar", "khand", "chini", "sakar", "shakkar", "ખાંડ", "साखर", "चीनी", "साकर", "शक्कर", "સાકર"]},
+  {"uid": "sku_0002", "en": "Salt", "aliases": ["salt", "namak", "mithu", "mith", "lon", "મીઠું", "मीठ", "नमक", "मिठ", "loon"]},
+  {"uid": "sku_0003", "en": "Rice", "aliases": ["rice", "chawal", "chaval", "bhat", "tandul", "ચોખા", "चावल", "तांदूळ", "भात", "akha"]},
+  {"uid": "sku_0004", "en": "Wheat", "aliases": ["wheat", "gehun", "ghau", "gahu", "godhu", "ઘઉં", "गेहूं", "गहू", "ઘઉ"]},
+  {"uid": "sku_0005", "en": "Atta", "aliases": ["atta", "aata", "flour", "wheat flour", "gehun atta", "lot", "કણક", "આટો", "आटा", "कणीक", "लोट"]},
+  {"uid": "sku_0006", "en": "Maida", "aliases": ["maida", "refined flour", "mendo", "મેંદો", "मैदा"]},
+  {"uid": "sku_0007", "en": "Besan", "aliases": ["besan", "gram flour", "chana flour", "બેસન", "बेसन", "डाळ पीठ"]},
+  {"uid": "sku_0008", "en": "Suji", "aliases": ["suji", "rava", "semolina", "ravo", "sooji", "સોજી", "रवा", "सूजी", "रवो"]},
+  {"uid": "sku_0009", "en": "Poha", "aliases": ["poha", "pohe", "beaten rice", "chira", "pauva", "પૌંઆ", "पोहे", "पोहा", "চিড়া"]},
+  {"uid": "sku_0010", "en": "Toor Dal", "aliases": ["toor dal", "tuvar dal", "arhar dal", "toovar", "tuvar", "toor", "તુવેર દાળ", "तूर डाळ", "अरहर दाल", "तूर दाल", "tuvar ni dal"]},
+  {"uid": "sku_0011", "en": "Chana Dal", "aliases": ["chana dal", "chana", "gram dal", "ચણા દાળ", "चणा डाळ", "चना दाल", "chane ki dal"]},
+  {"uid": "sku_0012", "en": "Moong Dal", "aliases": ["moong dal", "mung dal", "green gram", "mag dal", "moong", "મગ દાળ", "मूग डाळ", "मूंग दाल", "mag ni dal"]},
+  {"uid": "sku_0013", "en": "Urad Dal", "aliases": ["urad dal", "udad dal", "black gram", "adad", "અડદ દાળ", "उडीद डाळ", "उड़द दाल", "adad ni dal"]},
+  {"uid": "sku_0014", "en": "Masoor Dal", "aliases": ["masoor dal", "masur", "red lentil", "lal dal", "masoor", "મસૂર", "मसूर डाळ", "मसूर दाल"]},
+  {"uid": "sku_0015", "en": "Dal", "aliases": ["dal", "daal", "दाल", "दाळ", "ਦਾਲ", "daал"]},
+  {"uid": "sku_0016", "en": "Milk", "aliases": ["milk", "dudh", "doodh", "dairy", "દૂધ", "दूध", "पाउच दूध", "milk packet", "dudh packet", "pds milk"]},
+  {"uid": "sku_0017", "en": "Curd", "aliases": ["curd", "dahi", "yogurt", "doi", "दही", "दहीं", "દહીં", "દહી", "dahi packet", "taak"]},
+  {"uid": "sku_0018", "en": "Ghee", "aliases": ["ghee", "ghi", "clarified butter", "pure ghee", "ઘી", "तूप", "घी", "desi ghee"]},
+  {"uid": "sku_0019", "en": "Butter", "aliases": ["butter", "makhan", "makkhan", "માખણ", "लोणी", "मक्खन", "amul butter"]},
+  {"uid": "sku_0020", "en": "Paneer", "aliases": ["paneer", "cottage cheese", "chena", "પનીર", "पनीर", "panir"]},
+  {"uid": "sku_0021", "en": "Eggs", "aliases": ["eggs", "egg", "anda", "ande", "ઈંડા", "अंडी", "अंडे", "anda dozen", "anda tray"]},
+  {"uid": "sku_0022", "en": "Mustard Oil", "aliases": ["mustard oil", "sarson tel", "rai tel", "sarson ka tel", "સરસવ તેલ", "मोहरी तेल", "सरसों तेल"]},
+  {"uid": "sku_0023", "en": "Sunflower Oil", "aliases": ["sunflower oil", "suraj mukhi tel", "refined oil", "saffola", "સૂર્યમુખી તેલ", "सूर्यफूल तेल", "सूरजमुखी तेल"]},
+  {"uid": "sku_0024", "en": "Groundnut Oil", "aliases": ["groundnut oil", "peanut oil", "mungfali tel", "singtel", "shengdana tel", "મગફળી તેલ", "शेंगदाणे तेल", "मूंगफली तेल"]},
+  {"uid": "sku_0025", "en": "Coconut Oil", "aliases": ["coconut oil", "nariyal tel", "kopra tel", "khobrayl tel", "નાળિયેર તેલ", "खोबरेल तेल", "नारियल तेल"]},
+  {"uid": "sku_0026", "en": "Vanaspati", "aliases": ["vanaspati", "dalda", "vegetable oil", "hydrogenated oil", "ડાલ્ડા", "वनस्पती", "वनस्पति"]},
+  {"uid": "sku_0027", "en": "Turmeric", "aliases": ["turmeric", "haldi", "haldar", "harad", "haldi powder", "હળદર", "हळद", "हल्दी"]},
+  {"uid": "sku_0028", "en": "Red Chilli", "aliases": ["red chilli", "lal mirch", "lal mirchi", "tikhu", "mirchi", "marcha", "લાલ મરચું", "लाल मिरची", "लाल मिर्च", "tikhi mirchi"]},
+  {"uid": "sku_0029", "en": "Coriander Powder", "aliases": ["coriander powder", "dhana powder", "dhaniya", "dhaniya powder", "dhana", "ધાણા પાઉડર", "धने पावडर", "धनिया पाउडर"]},
+  {"uid": "sku_0030", "en": "Cumin", "aliases": ["cumin", "jeera", "jiru", "zeera", "jira", "jeeru", "જીરું", "जिरे", "जीरा"]},
+  {"uid": "sku_0031", "en": "Mustard Seeds", "aliases": ["mustard seeds", "rai", "mohri", "mohari", "sarson", "rye", "રાઈ", "मोहरी", "राई"]},
+  {"uid": "sku_0032", "en": "Fenugreek", "aliases": ["fenugreek", "methi", "methi seeds", "methya", "મેથી", "मेथी"]},
+  {"uid": "sku_0033", "en": "Asafoetida", "aliases": ["asafoetida", "hing", "heeng", "hingul", "હિંગ", "हिंग", "हींग"]},
+  {"uid": "sku_0034", "en": "Garam Masala", "aliases": ["garam masala", "masala", "garam masalo", "ગરમ મસાલો", "गरम मसाला"]},
+  {"uid": "sku_0035", "en": "Sambhar Masala", "aliases": ["sambhar masala", "sambar masala", "sambhar", "સાંભર મસાલો", "सांबार मसाला", "सांभर मसाला"]},
+  {"uid": "sku_0036", "en": "Chaat Masala", "aliases": ["chaat masala", "chat masala", "chaat", "ચાટ મસાલો", "चाट मसाला"]},
+  {"uid": "sku_0037", "en": "Tea", "aliases": ["tea", "chai", "cha", "patti", "chai patti", "chaha", "ચા", "चहा", "चाय", "cha patti", "tea patti"]},
+  {"uid": "sku_0038", "en": "Coffee", "aliases": ["coffee", "kafi", "kaafi", "nescafe", "bru", "કૉફી", "कॉफी"]},
+  {"uid": "sku_0039", "en": "Bournvita", "aliases": ["bournvita", "horlicks", "boost", "complan", "malt drink", "બૉર્નવિટા", "बॉर्नविटा"]},
+  {"uid": "sku_0040", "en": "Bread", "aliases": ["bread", "double roti", "pav roti", "loaf", "ब्रेड", "ब्रेड", "બ્રેડ", "double roti"]},
+  {"uid": "sku_0041", "en": "Parle-G", "aliases": ["parle g", "parle-g", "parleg", "parle g biscuit", "glucose biscuit", "paarle", "biscuit"]},
+  {"uid": "sku_0042", "en": "Britannia Biscuit", "aliases": ["britannia", "britannia biscuit", "good day", "marie", "fifty fifty", "tiger biscuit"]},
+  {"uid": "sku_0043", "en": "Maggi", "aliases": ["maggi", "magi", "noodles", "instant noodles", "maggi noodles", "top ramen", "yippee", "મૅગી", "मैगी"]},
+  {"uid": "sku_0044", "en": "Soap", "aliases": ["soap", "sabun", "sabun", "bathing soap", "lux", "lifebuoy", "dove", "dettol soap", "સાબુ", "साबण", "साबुन"]},
+  {"uid": "sku_0045", "en": "Detergent", "aliases": ["detergent", "washing powder", "kapda dhone powder", "surf", "surf excel", "ariel", "tide", "wheel", "rin", "ડિટર્જન્ટ", "डिटर्जंट", "धुलाई पाउडर"]},
+  {"uid": "sku_0046", "en": "Dishwash", "aliases": ["dishwash", "vim", "vim bar", "exo", "pril", "dish soap", "bartan soap", "vim liquid", "vimloq", "vimlog", "vim liq", "vim lig", "vim bar", "ભાંડા સાફ", "भांडे साफ"]},
+  {"uid": "sku_0047", "en": "Shampoo", "aliases": ["shampoo", "head shoulders", "clinic plus", "sunsilk", "pantene", "shampoo bottle", "શૅમ્પૂ", "शैम्पू"]},
+  {"uid": "sku_0048", "en": "Toothpaste", "aliases": ["toothpaste", "colgate", "pepsodent", "close up", "sensodyne", "paste", "ટૂથપેસ્ટ", "टूथपेस्ट", "dant manjan"]},
+  {"uid": "sku_0049", "en": "Toothbrush", "aliases": ["toothbrush", "brush", "colgate brush", "oral b", "ટૂથબ્રશ", "टूथब्रश"]},
+  {"uid": "sku_0050", "en": "Dettol", "aliases": ["dettol", "antiseptic", "lizol", "phenyl", "डेटॉल", "ડેટૉલ", "antiseptic liquid"]},
+  {"uid": "sku_0051", "en": "Harpic", "aliases": ["harpic", "toilet cleaner", "flush cleaner", "harpic bottle", "હાર્પિક", "हार्पिक", "toilet liquid"]},
+  {"uid": "sku_0052", "en": "Coconut", "aliases": ["coconut", "nariyal", "narikel", "kopru", "नारळ", "નાળિયેر", "kopra"]},
+  {"uid": "sku_0053", "en": "Onion", "aliases": ["onion", "kanda", "dungri", "pyaz", "pyaaj", "ડુંગળી", "कांदा", "प्याज", "dungri"]},
+  {"uid": "sku_0054", "en": "Potato", "aliases": ["potato", "aloo", "batata", "બટાકા", "बटाटा", "आलू", "bataka"]},
+  {"uid": "sku_0055", "en": "Tomato", "aliases": ["tomato", "tameta", "tamatar", "ટામેટા", "टोमॅटो", "टमाटर"]},
+  {"uid": "sku_0056", "en": "Garlic", "aliases": ["garlic", "lasun", "lehsun", "lasan", "લસણ", "लसूण", "लहसुन"]},
+  {"uid": "sku_0057", "en": "Ginger", "aliases": ["ginger", "adrak", "adu", "adrakh", "આદુ", "आलं", "अदरक"]},
+  {"uid": "sku_0058", "en": "Honey", "aliases": ["honey", "shahad", "madh", "dabur honey", "patanjali honey", "honey bottle", "મધ", "मध", "शहद", "100ml honey", "honey 100ml", "honey units"]},
+  {"uid": "sku_0059", "en": "Ketchup", "aliases": ["ketchup", "tomato sauce", "sauce", "maggi sauce", "kissan", "ટૉમૅટો સૉસ", "केचप", "tomato ketchup"]},
+  {"uid": "sku_0060", "en": "Pickle", "aliases": ["pickle", "athanu", "achar", "mixed pickle", "ઊઘ", "आचार", "अचार", "athanu"]},
+  {"uid": "sku_0061", "en": "Papad", "aliases": ["papad", "papadum", "lijjat", "papar", "પાપડ", "पापड"]},
+  {"uid": "sku_0062", "en": "Jaggery", "aliases": ["jaggery", "gol", "gud", "gur", "bellam", "ગોળ", "गूळ", "गुड़"]},
+  {"uid": "sku_0063", "en": "Tamarind", "aliases": ["tamarind", "imli", "chinch", "ambli", "આંબલી", "चिंच", "इमली"]},
+  {"uid": "sku_0064", "en": "Dry Mango Powder", "aliases": ["amchur", "dry mango powder", "amchoor", "આમચૂર", "आमचूर"]},
+  {"uid": "sku_0065", "en": "Coconut Milk", "aliases": ["coconut milk", "nariyal doodh", "naral doodh", "નાળિયેર દૂધ", "नारळ दूध"]},
+  {"uid": "sku_0066", "en": "Vermicelli", "aliases": ["vermicelli", "sevai", "shevai", "semiya", "સેવ", "शेवया", "सेवई"]},
+  {"uid": "sku_0067", "en": "Sago", "aliases": ["sago", "sabudana", "sabudana", "tapioca", "સાબુદાણા", "साबूदाणा", "साबूदाना"]},
+  {"uid": "sku_0068", "en": "Cornflour", "aliases": ["cornflour", "corn flour", "makki atta", "corn starch", "કૉર્નફ્લોર", "कॉर्नफ्लोर"]},
+  {"uid": "sku_0069", "en": "Baking Soda", "aliases": ["baking soda", "cooking soda", "meetha soda", "sodium bicarbonate", "ખાવાનો સોડો", "खाण्याचा सोडा", "खाने का सोडा"]},
+  {"uid": "sku_0070", "en": "Vinegar", "aliases": ["vinegar", "sirka", "sirko", "white vinegar", "sirka bottle", "સિરકો", "व्हिनेगर", "सिरका"]},
+  {"uid": "sku_0071", "en": "Soy Sauce", "aliases": ["soy sauce", "soya sauce", "chinese sauce", "સોયા સૉસ", "सोया सॉस"]},
+  {"uid": "sku_0072", "en": "Milk Powder", "aliases": ["milk powder", "doodh powder", "nestle milk", "amulya", "dairy whitener", "દૂધ પાઉડર", "दूध पावडर", "दूध पाउडर"]},
+  {"uid": "sku_0073", "en": "Condensed Milk", "aliases": ["condensed milk", "milkmaid", "meetha doodh", "milkmaid tin", "condensed", "ઘટ્ટ દૂધ", "गोड दूध"]},
+  {"uid": "sku_0074", "en": "Cream", "aliases": ["cream", "fresh cream", "malai", "amul cream", "ક્રીમ", "क्रीम", "मलाई"]},
+  {"uid": "sku_0075", "en": "Chips", "aliases": ["chips", "wafers", "lays", "kurkure", "bingo", "nachos", "ચિપ્સ", "चिप्स"]},
+  {"uid": "sku_0076", "en": "Namkeen", "aliases": ["namkeen", "farsan", "chivda", "mixture", "sev", "farsaan", "નમકીન", "नमकीन", "फरसाण"]},
+  {"uid": "sku_0077", "en": "Mouth Freshener", "aliases": ["mouth freshener", "mukhwas", "pan masala", "supari", "mukhvas", "મુખવાસ", "मुखवास"]},
+  {"uid": "sku_0078", "en": "Matchbox", "aliases": ["matchbox", "match box", "agarbatti matchbox", "maachis", "diyasalo", "દિવાસળી", "काडेपेटी", "माचिस"]},
+  {"uid": "sku_0079", "en": "Agarbatti", "aliases": ["agarbatti", "incense sticks", "incense", "agarbati", "ઊદ", "अगरबत्ती", "उदबत्ती"]},
+  {"uid": "sku_0080", "en": "Candle", "aliases": ["candle", "mombatti", "mombati", "wax candle", "મીણબત्ती", "मेणबत्ती", "मोमबत्ती"]},
+  {"uid": "sku_0081", "en": "Mosquito Coil", "aliases": ["mosquito coil", "goodknight coil", "allout", "mortein coil", "coil", "mos coil", "goodknight", "ગુડ નાઈટ", "मच्छर कॉइल"]},
+  {"uid": "sku_0082", "en": "Room Freshener", "aliases": ["room freshener", "air freshener", "odonil", "odomos", "odomos spray", "room spray"]},
+  {"uid": "sku_0083", "en": "Phenyl", "aliases": ["phenyl", "floor cleaner", "lizol", "domex", "floor liquid", "ફિनाइल", "फिनाइल"]},
+  {"uid": "sku_0084", "en": "Washing Bar", "aliases": ["washing bar", "kapda dhone sabun", "501 bar", "ghadi bar", "laundry bar", "ધોવાનો સાબુ", "कपडे धुण्याचा साबण", "कपड़ा धोने साबुन"]},
+  {"uid": "sku_0085", "en": "Coconut Chutney Powder", "aliases": ["coconut chutney powder", "chutney powder", "dry chutney", "chutney masala", "ચટણી પાઉડર", "चटणी पावडर"]},
+  {"uid": "sku_0086", "en": "Pav", "aliases": ["pav", "ladi pav", "dinner roll", "bun", "pao", "paav", "laadi pav", "પાઉ", "पाव"]},
+  {"uid": "sku_0087", "en": "Rusk", "aliases": ["rusk", "toast", "britannia rusk", "ટોસ્ટ", "रस्क", "double roti rusk"]},
+  {"uid": "sku_0088", "en": "Energy Drink", "aliases": ["energy drink", "red bull", "sting", "monster", "glucon d", "glucon", "energy drink bottle"]},
+  {"uid": "sku_0089", "en": "Cold Drink", "aliases": ["cold drink", "cola", "pepsi", "coke", "coca cola", "thums up", "limca", "sprite", "fanta", "mountain dew", "soft drink"]},
+  {"uid": "sku_0090", "en": "Water Bottle", "aliases": ["water bottle", "mineral water", "bisleri", "kinley", "aquafina", "packaged water", " પાણી", "पाणी", "पानी"]},
+  {"uid": "sku_0091", "en": "Juice", "aliases": ["juice", "fruit juice", "real juice", "tropicana", "slice", "maaza", "frooti", "juice packet", " જ્યૂસ", "ज्यूस"]},
+  {"uid": "sku_0092", "en": "Lassi", "aliases": ["lassi", "chaas", "buttermilk", "taak", "masala chaas", "lassee", "લસ્સી", "ताक", "लस्सी"]},
+  {"uid": "sku_0093", "en": "Rasgulla", "aliases": ["rasgulla", "rasgolla", "sweet", "mithai", "rosogolla", "canned sweet", "રસગુલ્લા", "रसगुल्ला"]},
+  {"uid": "sku_0094", "en": "Peanuts", "aliases": ["peanuts", "groundnuts", "mungfali", "sheng", "sing", "singdana", "shengdana", "મગફળી", "शेंगदाणे", "मूंगफली"]},
+  {"uid": "sku_0095", "en": "Cashew", "aliases": ["cashew", "kaju", "kaaju", "cashewnuts", "કાજુ", "काजू"]},
+  {"uid": "sku_0096", "en": "Raisins", "aliases": ["raisins", "kishmish", "kismis", "dry grapes", "દ્રાક્ષ", "किशमिश", "मनुका"]},
+  {"uid": "sku_0097", "en": "Almonds", "aliases": ["almonds", "badam", "almond", "badaam", "બદામ", "बदाम"]},
+  {"uid": "sku_0098", "en": "Fennel Seeds", "aliases": ["fennel seeds", "saunf", "variyali", "sounf", "fennel", "વરિયાળી", "बडीशेप", "सौंफ"]},
+  {"uid": "sku_0099", "en": "Cardamom", "aliases": ["cardamom", "elaichi", "elaychi", "cardamon", "elchi", "એલચી", "वेलची", "इलायची"]},
+  {"uid": "sku_0100", "en": "Cloves", "aliases": ["cloves", "lavang", "laung", "loung", "લવિંગ", "लवंग", "लौंग"]},
+  {"uid": "sku_0101", "en": "Cinnamon", "aliases": ["cinnamon", "taj", "dalchini", "tuj", "તજ", "दालचिनी", "दालचीनी"]},
+  {"uid": "sku_0102", "en": "Black Pepper", "aliases": ["black pepper", "kali mirch", "kala miri", "mari", "kalimiri", "કાળા મરી", "काळी मिरी", "काली मिर्च"]},
+  {"uid": "sku_0103", "en": "Bay Leaf", "aliases": ["bay leaf", "tejpatta", "tamal patra", "tej patta", "tamalpatra", "તજ પાન", "तमालपत्र", "तेजपत्ता"]},
+  {"uid": "sku_0104", "en": "Star Anise", "aliases": ["star anise", "chakri phool", "badayan", "chakra phool", "ચક્રી ફૂલ", "चक्री फूल"]},
+  {"uid": "sku_0105", "en": "Mace", "aliases": ["mace", "javitri", "javantri", "jaavitri", "જાવિત્રી", "जावित्री"]},
+  {"uid": "sku_0106", "en": "Nutmeg", "aliases": ["nutmeg", "jaiphal", "jayfal", "jayaphal", "જાયફળ", "जायफळ", "जायफल"]},
+  {"uid": "sku_0107", "en": "Sanitizer", "aliases": ["sanitizer", "hand sanitizer", "dettol sanitizer", "purell", "सॅनिटाइझर", "sanitiser"]},
+  {"uid": "sku_0108", "en": "Mask", "aliases": ["mask", "face mask", "n95", "surgical mask", "मास्क", "face cover"]},
+  {"uid": "sku_0109", "en": "Tissue Paper", "aliases": ["tissue", "tissue paper", "napkin", "kleenex", "ટિશ્યૂ", "टिश्यू"]},
+  {"uid": "sku_0110", "en": "Aluminium Foil", "aliases": ["aluminium foil", "aluminum foil", "foil paper", "kitchen foil", "ફૉઈલ", "फॉइल"]},
+  {"uid": "sku_0111", "en": "Plastic Bag", "aliases": ["plastic bag", "carry bag", "polythene", "cover", "थैली", "પ્લાસ્ટિક", "पिशवी"]},
+  {"uid": "sku_0112", "en": "Notebook", "aliases": ["notebook", "copy", "khata", "register", "khata book", "dairy", "ખાતું", "वही", "खाते"]},
+  {"uid": "sku_0113", "en": "Pen", "aliases": ["pen", "ball pen", "ballpoint", "reynolds", "cello", "pen refill", "પેન", "पेन"]},
+  {"uid": "sku_0114", "en": "Pencil", "aliases": ["pencil", "natraj pencil", "apsara", "pencil box", "પેન્સિલ", "पेन्सिल"]},
+  {"uid": "sku_0115", "en": "Rubber Band", "aliases": ["rubber band", "elastic band", "rubber", "band", "band packet", "रबर बँड"]},
+  {"uid": "sku_0116", "en": "Stapler", "aliases": ["stapler", "staple pin", "staple", "stapler pin", "સ્ટૅપ્લર", "स्टेपलर"]},
+  {"uid": "sku_0117", "en": "Cello Tape", "aliases": ["cello tape", "cellotape", "tape", "transparent tape", "scotch tape", "ટેપ", "टेप"]},
+  {"uid": "sku_0118", "en": "Glucose Powder", "aliases": ["glucose", "glucose d", "glucon d", "glucose powder", "ગ્લુકોઝ", "ग्लुकोज"]},
+  {"uid": "sku_0119", "en": "ORS", "aliases": ["ors", "electral", "oral rehydration", "electrolyte", "jeevan jal", "ओआरएस"]},
+  {"uid": "sku_0120", "en": "Band Aid", "aliases": ["band aid", "bandage", "bandaid", "elastoplast", "wound strip", "ബँडेज", "बँडेज"]},
+  {"uid": "sku_0121", "en": "Paracetamol", "aliases": ["paracetamol", "crocin", "dolo", "metacin", "fever tablet", "tablet", "calpol"]},
+  {"uid": "sku_0122", "en": "Antacid", "aliases": ["antacid", "digene", "eno", "pan", "gelusil", "acidity tablet", "eno sachet"]},
+  {"uid": "sku_0123", "en": "Balm", "aliases": ["balm", "vicks", "amrutanjan", "tiger balm", "pain balm", "zandu balm", "ointment"]},
+  {"uid": "sku_0124", "en": "Hair Oil", "aliases": ["hair oil", "tel", "coconut hair oil", "parachute", "vatika", "dabur oil", "hair tel", "teel oil", "wal tel"]},
+  {"uid": "sku_0125", "en": "Face Cream", "aliases": ["face cream", "cream", "fair lovely", "pond's", "nivea", "moisturizer", "cold cream", "ક્રીમ", "क्रीम"]},
+  {"uid": "sku_0126", "en": "Talcum Powder", "aliases": ["talcum powder", "powder", "ponds powder", "johnson powder", "baby powder", "talc", "પાઉડર", "पावडर", "तालक"]},
+  {"uid": "sku_0127", "en": "Deodorant", "aliases": ["deodorant", "deo", "body spray", "axe", "fogg", "deo spray"]},
+  {"uid": "sku_0128", "en": "Sanitary Pad", "aliases": ["sanitary pad", "whisper", "stayfree", "sofy", "pad", "napkin", "sanitary napkin", "सॅनिटरी पॅड"]},
+  {"uid": "sku_0129", "en": "Diaper", "aliases": ["diaper", "pampers", "huggies", "baby diaper", "nappy", "डायपर"]},
+  {"uid": "sku_0130", "en": "Baby Powder", "aliases": ["baby powder", "johnson baby", "johnson powder", "talcum", "baby talc", "बेबी पावडर"]},
+  {"uid": "sku_0131", "en": "Chyawanprash", "aliases": ["chyawanprash", "chyavanaprasam", "dabur chyawanprash", "च्यवनप्राश", "chyavanprash"]},
+  {"uid": "sku_0132", "en": "Amla", "aliases": ["amla", "awla", "gooseberry", "amla powder", "आवळा", "આંવળા", "आंवला"]},
+  {"uid": "sku_0133", "en": "Murmura", "aliases": ["murmura", "puffed rice", "mamra", "bhel", "mumra", "laiya", "મમરા", "मुरमुरे", "लाई"]},
+  {"uid": "sku_0134", "en": "Til", "aliases": ["til", "sesame", "sesame seeds", "white til", "black til", "તલ", "तिळ", "तिल"]},
+  {"uid": "sku_0135", "en": "Dry Coconut", "aliases": ["dry coconut", "sukha nariyal", "kopra", "sukha kopra", "સૂકું નાળિયેર", "सुके खोबरे"]},
+  {"uid": "sku_0136", "en": "Khakhra", "aliases": ["khakhra", "khakra", "khakhara", "khakhro", "ખાખરા", "खाखरा"]},
+  {"uid": "sku_0137", "en": "Thepla", "aliases": ["thepla", "methi thepla", "thepla packet", "થેપલા", "थेपला"]},
+  {"uid": "sku_0138", "en": "Chakli", "aliases": ["chakli", "murukku", "chakali", "ચકલી", "चकली"]},
+  {"uid": "sku_0139", "en": "Chivda", "aliases": ["chivda", "poha chivda", "mixture", "chivda packet", "ચેવડો", "चिवडा"]},
+  {"uid": "sku_0140", "en": "Peanut Chikki", "aliases": ["chikki", "peanut chikki", "gajak", "sing chikki", "ચીક્કી", "चिक्की", "गजक"]},
+  {"uid": "sku_0141", "en": "Iodex", "aliases": ["iodex", "moov", "volini", "pain relief", "spray", "pain spray", "muscle pain"]},
+  {"uid": "sku_0142", "en": "Fevicol", "aliases": ["fevicol", "glue", "adhesive", "m seal", "fevikwik", "ફેવિકૉલ", "फेविकोल"]},
+  {"uid": "sku_0143", "en": "Bulb", "aliases": ["bulb", "led bulb", "light bulb", "cfl", "tube light", "led", "electric bulb", "બલ્બ", "बल्ब"]},
+  {"uid": "sku_0144", "en": "Battery", "aliases": ["battery", "cell", "eveready", "duracell", "dry cell", "torch battery", "બૅટરી", "बॅटरी"]},
+  {"uid": "sku_0145", "en": "Lock", "aliases": ["lock", "padlock", "godrej lock", "tala", "ताला", "તાળું"]},
+  {"uid": "sku_0146", "en": "Rope", "aliases": ["rope", "dori", "nylon rope", "kapda rope", "clothes rope", "દોરી", "दोरी"]},
+  {"uid": "sku_0147", "en": "Bucket", "aliases": ["bucket", "balti", "plastic bucket", "बाल्टी", "બાલ્ટી"]},
+  {"uid": "sku_0148", "en": "Mug", "aliases": ["mug", "plastic mug", "tub", "tabak", "mug bucket", "મગ", "मग"]},
+  {"uid": "sku_0149", "en": "Broom", "aliases": ["broom", "jhadu", "besom", "झाडू", "ઝાડુ", "kharata"]},
+  {"uid": "sku_0150", "en": "Mop", "aliases": ["mop", "pocha", "floor mop", "swab", "पोचा", "પોતું"]}
 ]

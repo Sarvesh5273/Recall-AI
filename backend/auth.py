@@ -248,6 +248,7 @@ def login_otp(payload: LoginOTPPayload):
     if stored["otp"] != payload.otp.strip():
         raise HTTPException(status_code=400, detail="Incorrect OTP.")
 
+
     # 2. Find account
     container = db.get_container()
     accounts = list(container.query_items(

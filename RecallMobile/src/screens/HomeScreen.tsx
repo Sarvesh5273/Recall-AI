@@ -74,7 +74,9 @@ export default function HomeScreen({ navigation }: any) {
   };
 
   useFocusEffect(useCallback(() => {
-    fetchDashboardData();
+    // Small delay so SyncWorker has time to write to Cosmos before we fetch
+    const timer = setTimeout(() => fetchDashboardData(), 2000);
+    return () => clearTimeout(timer);
   }, [shopId]));
 
   // Scan usage bar logic

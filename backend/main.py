@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 from azure.storage.blob import BlobServiceClient
-from thefuzz import process
 from pydantic import BaseModel
 from database import db
 from auth import router as auth_router, get_current_shop
@@ -45,15 +44,92 @@ with open(_catalog_path, "r", encoding="utf-8") as f:
     _catalog_list = json.load(f)
 
 MASTER_DICTIONARY = {item["uid"]: {"en": item["en"], "aliases": item["aliases"]} for item in _catalog_list}
-ALL_ALIASES = [alias for item in MASTER_DICTIONARY.values() for alias in item["aliases"]]
-
-def sort_extracted_item(raw_ai_text: str):
+def sort_extracted_item(raw_ai_text: str, shop_id: str = None):
     if not raw_ai_text: return {"routing": "QUARANTINE_INBOX", "raw_text": "Unknown", "confidence_score": 0}
-    best_match, score = process.extractOne(raw_ai_text.lower(), ALL_ALIASES)
-    if score >= 88:
-        for uid, data in MASTER_DICTIONARY.items():
-            if best_match in data["aliases"]: return {"routing": "CLEAN_INVENTORY", "uid": uid, "standard_name": raw_ai_text.strip(), "confidence_score": score}
-    return {"routing": "QUARANTINE_INBOX", "raw_text": raw_ai_text, "confidence_score": score}
+
+    normalized = raw_ai_text.strip().lower()
+
+    # ── STEP 1: Training signals — exact lookup ───────────────────────────────
+    # If owner already mapped this OCR text before → use instantly, no AI needed
+    if shop_id:
+        try:
+            results = list(db.get_training_container().query_items(
+                query="""
+                    SELECT c.mapped_uid, c.mapped_to FROM c
+                    WHERE c.type = 'training_signal'
+                      AND c.shop_id = @shop_id
+                      AND LOWER(c.raw_ocr) = @raw_ocr
+                """,
+                parameters=[
+                    {"name": "@shop_id", "value": shop_id},
+                    {"name": "@raw_ocr",  "value": normalized}
+                ],
+                enable_cross_partition_query=True
+            ))
+            if results:
+                hit = results[0]
+                print(f"🧠 Training hit: '{raw_ai_text}' → '{hit['mapped_to']}' (learned from owner)")
+                return {
+                    "routing": "CLEAN_INVENTORY",
+                    "uid": hit["mapped_uid"],
+                    "standard_name": raw_ai_text.strip(),
+                    "confidence_score": 100,
+                    "source": "training"
+                }
+        except Exception as e:
+            print(f"Training signal lookup failed (non-critical): {e}")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ── STEP 2: GPT-4o mini — multilingual semantic match ────────────────────
+    # Fuzzy matching fails for multilingual text (e.g. "khand" → wrong item).
+    # GPT understands Gujarati/Hindi/Marathi natively — far more accurate.
+    # Only fires when training signal misses → cost is ~₹0.008 per uncertain item.
+    try:
+        catalog_list = [{"uid": uid, "name": data["en"]} for uid, data in MASTER_DICTIONARY.items()]
+        catalog_str = json.dumps(catalog_list, ensure_ascii=False)
+
+        gpt_match = azure_ai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": """You are a multilingual product matcher for Indian kirana stores.
+Given a raw OCR product name (may be in English, Gujarati, Hindi, or Marathi) and a catalog,
+return ONLY a JSON object with:
+- "uid": the matching catalog uid, or "unknown" if no confident match
+- "confidence": a number 0-100
+
+Rules:
+- Match by meaning, not spelling (e.g. "ખાંડ" = Sugar, "चावल" = Rice, "khand" = Sugar, "mithu" = Salt)
+- Only return a uid if you are confident (confidence >= 85)
+- If ambiguous or genuinely not in catalog, return uid: "unknown"
+- Return ONLY the JSON object, nothing else"""},
+                {"role": "user", "content": f"Product: \"{raw_ai_text}\"\nCatalog: {catalog_str}"}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+            max_tokens=60
+        )
+
+        result = json.loads(gpt_match.choices[0].message.content)
+        matched_uid = result.get("uid", "unknown")
+        confidence = result.get("confidence", 0)
+
+        print(f"🤖 GPT match: '{raw_ai_text}' → uid={matched_uid} confidence={confidence}")
+
+        if matched_uid != "unknown" and matched_uid in MASTER_DICTIONARY and confidence >= 85:
+            return {
+                "routing": "CLEAN_INVENTORY",
+                "uid": matched_uid,
+                "standard_name": raw_ai_text.strip(),  # keep original text — owner's language
+                "confidence_score": confidence,
+                "source": "gpt"
+            }
+    except Exception as e:
+        print(f"GPT match failed (non-critical): {e}")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ── STEP 3: QUARANTINE ────────────────────────────────────────────────────
+    # GPT couldn't match → owner maps manually → becomes a training signal
+    return {"routing": "QUARANTINE_INBOX", "raw_text": raw_ai_text, "confidence_score": 0}
 
 def safe_float(value, default=1.0):
     try: return float(value)
@@ -149,19 +225,18 @@ If the same item appears multiple times with the same unit, sum the quantities a
             unit = str(item.get("unit", "unit"))
             qty_math = qty if scan_type == "IN" else -qty
 
-            sort_result = sort_extracted_item(raw_name)
+            sort_result = sort_extracted_item(raw_name, shop_id)
             uid_to_update, standard_name_to_use = None, None
 
             if sort_result["routing"] == "CLEAN_INVENTORY":
                 uid_to_update, standard_name_to_use = sort_result["uid"], sort_result["standard_name"]
             else:
+                # Custom items — exact match only (owner typed these names themselves)
                 if custom_items:
-                    best_match, custom_score = process.extractOne(raw_name.lower(), [ci["standard_name"] for ci in custom_items])
-                    if custom_score >= 85:
-                        for ci in custom_items:
-                            if ci["standard_name"] == best_match:
-                                uid_to_update, standard_name_to_use = ci["uid"], ci["standard_name"]
-                                break
+                    for ci in custom_items:
+                        if ci["standard_name"].strip().lower() == raw_name.strip().lower():
+                            uid_to_update, standard_name_to_use = ci["uid"], ci["standard_name"]
+                            break
 
             # --- IN-BATCH DEDUPLICATION ---
             # If same UID already processed in this scan with same unit → merge qty
@@ -310,7 +385,7 @@ def sync_mapped_item(payload: MappedItemPayload, current_shop: dict = Depends(ge
         # This data trains future matching models — never delete these records
         if payload.raw_text and payload.raw_text.strip() and payload.raw_text.strip().lower() != payload.standard_name.strip().lower():
             try:
-                container.create_item(body={
+                training_doc = {
                     "id": str(uuid.uuid4()),
                     "type": "training_signal",
                     "shop_id": payload.shop_id,
@@ -318,10 +393,12 @@ def sync_mapped_item(payload: MappedItemPayload, current_shop: dict = Depends(ge
                     "mapped_to": payload.standard_name.strip(),
                     "mapped_uid": payload.uid,
                     "timestamp": datetime.now(timezone.utc).isoformat()
-                })
+                }
+                db.get_training_container().create_item(body=training_doc)
                 print(f"🧠 Training signal saved: '{payload.raw_text}' → '{payload.standard_name}'")
             except Exception as te:
-                print(f"Training signal write failed (non-critical): {te}")
+                print(f"Training signal write failed: {te}")
+                raise HTTPException(status_code=500, detail=f"Training write failed: {str(te)}")
         # ────────────────────────────────────────────────────────────────────
 
         return {"status": "success", "message": "Synced"}
