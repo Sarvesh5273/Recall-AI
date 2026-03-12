@@ -29,11 +29,10 @@ class TestCircuitBreaker:
         assert cb.state == CircuitState.CLOSED
 
     def test_half_open_after_timeout(self):
+        # With reset_timeout=0, circuit immediately becomes HALF_OPEN after opening
         cb = CircuitBreaker("test", failure_threshold=1, reset_timeout=0)
         cb.record_failure()
-        assert cb.state == CircuitState.OPEN
-        import time
-        time.sleep(0.1)
+        # reset_timeout=0 means it's already past timeout, so state is HALF_OPEN
         assert cb.state == CircuitState.HALF_OPEN
 
     def test_status_returns_dict(self):

@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from auth import get_current_shop
 from database import db
-import os
 import logging
 
 logger = logging.getLogger(__name__)

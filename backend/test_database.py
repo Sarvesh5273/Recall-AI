@@ -1,7 +1,5 @@
 """Tests for Cosmos DB retry logic."""
 
-import time
-from unittest.mock import MagicMock, patch
 from azure.cosmos import exceptions
 from database import cosmos_retry
 

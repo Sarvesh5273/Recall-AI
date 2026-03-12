@@ -18,6 +18,10 @@ python-jose[cryptography]==3.3.0     # JWT encode/decode
 # ── HTTP Client ───────────────────────────────────────────────────────────────
 httpx==0.27.0                        # Async HTTP — Sarvam Vision OCR calls
 
+# ── Job Queue ────────────────────────────────────────────────────────────────
+redis==5.0.1                         # Redis client for Upstash
+rq==1.16.1                           # Simple background job queue
+
 # ── Fuzzy Matching ────────────────────────────────────────────────────────────
 thefuzz==0.22.1                      # Fuzzy string match for item names
 python-Levenshtein==0.25.1           # Speed up thefuzz

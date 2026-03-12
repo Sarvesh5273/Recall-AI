@@ -1,14 +1,18 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 import os
 import httpx
 import json
 import uuid
 import time
 import logging
-import sentry_sdk
+import base64
+import threading
+from collections import defaultdict
 from datetime import datetime, timezone
+
+import sentry_sdk
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Depends, Path, Header
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 from azure.storage.blob import BlobServiceClient
@@ -17,6 +21,10 @@ from database import db
 from auth import router as auth_router, get_current_shop
 from payments import router as payments_router
 from circuit_breaker import sarvam_circuit, openai_circuit
+from job_queue import (
+    is_queue_available, get_job_queue, get_job_status, get_job_result,
+    store_job_status, process_ledger_job
+)
 
 # ── SENTRY (Error Tracking) ─────────────────────────────────────────────────
 SENTRY_DSN = os.getenv("SENTRY_DSN")
@@ -30,9 +38,6 @@ if SENTRY_DSN:
 logger = logging.getLogger(__name__)
 
 # ── RATE LIMITER ─────────────────────────────────────────────────────────────
-from collections import defaultdict
-import threading
-
 _rate_store: dict = defaultdict(lambda: {"window_start": 0.0, "count": 0})
 _rate_lock = threading.Lock()
 
@@ -77,12 +82,27 @@ azure_ai_client = AzureOpenAI(
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
 )
 
-blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
-blob_container_client = blob_service_client.get_container_client(CONTAINER_NAME)
+blob_service_client = None
+blob_container_client = None
+
+def get_blob_container_client():
+    """Lazy initialization of blob clients. Raises HTTPException(503) if unavailable."""
+    global blob_service_client, blob_container_client
+    if blob_container_client is not None:
+        return blob_container_client
+    try:
+        if not AZURE_STORAGE_CONNECTION_STRING:
+            raise ValueError("AZURE_STORAGE_CONNECTION_STRING not configured")
+        blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+        blob_container_client = blob_service_client.get_container_client(CONTAINER_NAME)
+        return blob_container_client
+    except Exception as e:
+        logger.error(f"Blob storage initialization failed: {e}")
+        raise HTTPException(status_code=503, detail="Blob storage unavailable")
 
 app = FastAPI(title="Recall AI Enterprise Engine", version="5.0.0")
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:8081").split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -117,11 +137,17 @@ def health_check():
 
     # Azure Blob Storage
     try:
-        blob_container_client.get_container_properties()
+        get_blob_container_client().get_container_properties()
         checks["blob_storage"] = "ok"
+    except HTTPException:
+        checks["blob_storage"] = "error: not configured"
+        healthy = False
     except Exception as e:
         checks["blob_storage"] = f"error: {type(e).__name__}"
         healthy = False
+
+    # Redis Job Queue (optional — doesn't affect health status)
+    checks["job_queue"] = "ok" if is_queue_available() else "disabled"
 
     return JSONResponse(
         status_code=200 if healthy else 503,
@@ -143,8 +169,150 @@ with open(_catalog_path, "r", encoding="utf-8") as f:
     _catalog_list = json.load(f)
 
 MASTER_DICTIONARY = {item["uid"]: {"en": item["en"], "aliases": item["aliases"]} for item in _catalog_list}
+
+# Pre-computed catalog string for batch GPT calls — avoids re-serializing on every request
+_CATALOG_FOR_GPT = json.dumps(
+    [{"uid": uid, "name": data["en"], "aliases": data.get("aliases", [])} for uid, data in MASTER_DICTIONARY.items()],
+    ensure_ascii=False
+)
+
+CONFIDENCE_THRESHOLD = 85
+
+def batch_sort_items(items: list, shop_id: str) -> dict:
+    """
+    Batch match items to master catalog.
+    Returns dict keyed by raw_name with sort results.
+    
+    Flow:
+    1. Tier 1: Training signal lookup (one query for all items)
+    2. Tier 2: Batch GPT call for all Tier 1 misses (single API call)
+    3. Items below confidence threshold → quarantine
+    """
+    if not items:
+        return {}
+    
+    results = {}
+    tier1_misses = []
+    
+    # ── TIER 1: Training signals — batch lookup ──────────────────────────────
+    # Query all training signals for this shop, then match in-memory
+    if shop_id:
+        try:
+            training_signals = list(db.get_training_container().query_items(
+                query="""
+                    SELECT c.raw_ocr, c.mapped_uid, c.mapped_to FROM c
+                    WHERE c.type = 'training_signal' AND c.shop_id = @shop_id
+                """,
+                parameters=[{"name": "@shop_id", "value": shop_id}],
+                enable_cross_partition_query=True
+            ))
+            # Build lookup dict: normalized raw_ocr → {uid, name}
+            training_lookup = {sig["raw_ocr"].strip().lower(): {"uid": sig["mapped_uid"], "name": sig["mapped_to"]} for sig in training_signals}
+        except Exception as e:
+            logger.warning(f"Training signal batch lookup failed (non-critical): {e}")
+            training_lookup = {}
+    else:
+        training_lookup = {}
+    
+    # Match each item against training signals
+    for item in items:
+        raw_name = str(item.get("raw_name", "")).strip()
+        if not raw_name:
+            results[raw_name] = {"routing": "QUARANTINE_INBOX", "raw_text": "Unknown", "confidence_score": 0}
+            continue
+        
+        normalized = raw_name.lower()
+        if normalized in training_lookup:
+            hit = training_lookup[normalized]
+            logger.info(f"Training hit: '{raw_name}' → '{hit['name']}' (learned from owner)")
+            results[raw_name] = {
+                "routing": "CLEAN_INVENTORY",
+                "uid": hit["uid"],
+                "standard_name": raw_name,
+                "confidence_score": 100,
+                "source": "training"
+            }
+        else:
+            tier1_misses.append(raw_name)
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    # ── TIER 2: Batch GPT call for all misses ────────────────────────────────
+    if tier1_misses:
+        try:
+            items_str = json.dumps(tier1_misses, ensure_ascii=False)
+            
+            gpt_response = azure_ai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": f"""You are a multilingual product matcher for Indian kirana stores.
+Given a list of raw OCR product names (may be in English, Gujarati, Hindi, or Marathi) and a catalog,
+return a JSON object with "matches": an array of objects, one per input item IN THE SAME ORDER.
+
+Each object must have:
+- "raw_name": the exact input string
+- "uid": the matching catalog uid, or "unknown" if no confident match
+- "confidence": a number 0-100
+
+Rules:
+- Match against both "name" AND "aliases" in the catalog
+- Aliases include regional spellings: "khand","chini","ખાંડ","साखर" all match Sugar
+- "दही" matches alias "दही" in Curd, "mithu" matches Salt, "ઘઉં" matches Wheat
+- Only return a uid from this catalog — NEVER guess outside the list
+- Only return a uid if confident (confidence >= {CONFIDENCE_THRESHOLD})
+- If ambiguous or not in catalog → return uid: "unknown"
+- Return ONLY the JSON object, nothing else
+
+Catalog: {_CATALOG_FOR_GPT}"""},
+                    {"role": "user", "content": f"Products to match: {items_str}"}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+                max_tokens=50 * len(tier1_misses)  # ~50 tokens per item
+            )
+            
+            gpt_result = json.loads(gpt_response.choices[0].message.content)
+            matches = gpt_result.get("matches", [])
+            
+            logger.info(f"Batch GPT: {len(tier1_misses)} items matched in single call")
+            
+            # Process GPT results
+            for match in matches:
+                raw_name = match.get("raw_name", "")
+                matched_uid = match.get("uid", "unknown")
+                confidence = match.get("confidence", 0)
+                
+                logger.info(f"GPT match: '{raw_name}' → uid={matched_uid} confidence={confidence}")
+                
+                if matched_uid != "unknown" and matched_uid in MASTER_DICTIONARY and confidence >= CONFIDENCE_THRESHOLD:
+                    results[raw_name] = {
+                        "routing": "CLEAN_INVENTORY",
+                        "uid": matched_uid,
+                        "standard_name": raw_name,
+                        "confidence_score": confidence,
+                        "source": "gpt"
+                    }
+                else:
+                    results[raw_name] = {"routing": "QUARANTINE_INBOX", "raw_text": raw_name, "confidence_score": confidence}
+            
+            # Handle any items not in GPT response (shouldn't happen, but be safe)
+            for raw_name in tier1_misses:
+                if raw_name not in results:
+                    logger.warning(f"GPT missed item '{raw_name}' — sending to quarantine")
+                    results[raw_name] = {"routing": "QUARANTINE_INBOX", "raw_text": raw_name, "confidence_score": 0}
+                    
+        except Exception as e:
+            logger.warning(f"Batch GPT match failed (non-critical): {e}")
+            # Fallback: all misses go to quarantine
+            for raw_name in tier1_misses:
+                if raw_name not in results:
+                    results[raw_name] = {"routing": "QUARANTINE_INBOX", "raw_text": raw_name, "confidence_score": 0}
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    return results
+
 def sort_extracted_item(raw_ai_text: str, shop_id: str = None):
-    if not raw_ai_text: return {"routing": "QUARANTINE_INBOX", "raw_text": "Unknown", "confidence_score": 0}
+    if not raw_ai_text:
+        return {"routing": "QUARANTINE_INBOX", "raw_text": "Unknown", "confidence_score": 0}
 
     normalized = raw_ai_text.strip().lower()
 
@@ -234,8 +402,10 @@ Rules:
     return {"routing": "QUARANTINE_INBOX", "raw_text": raw_ai_text, "confidence_score": 0}
 
 def safe_float(value, default=1.0):
-    try: return float(value)
-    except (ValueError, TypeError): return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
 
 # 2. Main Processing Pipeline
 @app.post("/process-ledger")
@@ -273,9 +443,48 @@ async def process_ledger(
     image_bytes = await file.read()
     unique_filename = f"{shop_id}_{uuid.uuid4().hex}_{file.filename}"
     try:
-        blob_container_client.get_blob_client(unique_filename).upload_blob(image_bytes, overwrite=True)
-    except Exception as e: logger.warning(f"Blob warning: {e}")
+        get_blob_container_client().get_blob_client(unique_filename).upload_blob(image_bytes, overwrite=True)
+    except HTTPException:
+        logger.warning("Blob storage unavailable, skipping archive")
+    except Exception as e:
+        logger.warning(f"Blob warning: {e}")
 
+    # --- 4. ASYNC JOB QUEUE (if available) ---
+    # Enqueue heavy processing (OCR + GPT + matching) and return immediately
+    # Mobile polls /job-status/{job_id} for results
+    if is_queue_available():
+        job_id = str(uuid.uuid4())
+        try:
+            queue = get_job_queue()
+            queue.enqueue(
+                process_ledger_job,
+                job_id=job_id,
+                shop_id=shop_id,
+                scan_type=scan_type,
+                scan_id=scan_id,
+                image_bytes_b64=base64.b64encode(image_bytes).decode('utf-8'),
+                filename=file.filename,
+                content_type=file.content_type,
+                plan=plan,
+                current_month=current_month,
+                usage_doc_id=usage_doc_id,
+                usage_exists=bool(usage_records),
+                job_id_override=job_id,
+                job_timeout=120
+            )
+            store_job_status(job_id, "queued", "Waiting for worker...")
+            logger.info(f"Job {job_id} enqueued for shop {shop_id}")
+            return {
+                "status": "processing",
+                "job_id": job_id,
+                "message": "Scan queued for processing. Poll /job-status/{job_id} for results."
+            }
+        except Exception as e:
+            logger.warning(f"Job queue failed, falling back to sync: {e}")
+            # Fall through to synchronous processing
+
+    # --- 5. SYNCHRONOUS FALLBACK (when Redis unavailable) ---
+    # Same processing as background job, but inline
     # --- 4. AI PIPELINE ---
     try:
         if not sarvam_circuit.is_available():
@@ -334,13 +543,19 @@ If the same item appears multiple times with the same unit, sum the quantities a
         # Prevents double-counting when same item appears twice on one ledger
         processed_in_batch: dict = {}  # uid → unit already seen this scan
 
+        # ── BATCH MATCHING: Single GPT call for all items ────────────────────
+        # Tier 1 (training signals) runs first, then Tier 2 (GPT) for misses
+        # Cost: 50 items → 1 GPT call instead of 50 → ~70% cost reduction
+        sort_results = batch_sort_items(structured_items, shop_id)
+        # ────────────────────────────────────────────────────────────────────
+
         for item in structured_items:
-            raw_name = str(item.get("raw_name", ""))
+            raw_name = str(item.get("raw_name", "")).strip()
             qty = safe_float(item.get("quantity", 1.0))
             unit = str(item.get("unit", "unit"))
             qty_math = qty if scan_type == "IN" else -qty
 
-            sort_result = sort_extracted_item(raw_name, shop_id)
+            sort_result = sort_results.get(raw_name, {"routing": "QUARANTINE_INBOX", "raw_text": raw_name, "confidence_score": 0})
             uid_to_update, standard_name_to_use = None, None
 
             if sort_result["routing"] == "CLEAN_INVENTORY":
@@ -364,31 +579,39 @@ If the same item appears multiple times with the same unit, sum the quantities a
                         logger.warning(f"Dedup: '{raw_name}' already processed this batch, merging qty")
                         # Update the already-queued qty by patching the Cosmos record again
                         # Just quarantine with a note — safer than double-patching
-                        results["quarantined"].append({
+                        quarantine_item = {
                             "id": str(uuid.uuid4()),
                             "shop_id": shop_id,
+                            "type": "quarantine",
                             "raw_text": raw_name,
                             "quantity": qty,
                             "unit": unit,
                             "scan_type": scan_type,
                             "status": "needs_review",
                             "confidence_score": sort_result["confidence_score"] if sort_result else 0,
-                            "quarantine_reason": f"Duplicate in same ledger — verify manually"
-                        })
+                            "quarantine_reason": "Duplicate in same ledger — verify manually",
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        }
+                        container.create_item(body=quarantine_item)
+                        results["quarantined"].append(quarantine_item)
                         continue
                     else:
                         # Same item, different unit — quarantine
-                        results["quarantined"].append({
+                        quarantine_item = {
                             "id": str(uuid.uuid4()),
                             "shop_id": shop_id,
+                            "type": "quarantine",
                             "raw_text": raw_name,
                             "quantity": qty,
                             "unit": unit,
                             "scan_type": scan_type,
                             "status": "needs_review",
                             "confidence_score": sort_result["confidence_score"] if sort_result else 0,
-                            "quarantine_reason": f"Unit mismatch in same ledger: '{prev_unit}' vs '{unit}'"
-                        })
+                            "quarantine_reason": f"Unit mismatch in same ledger: '{prev_unit}' vs '{unit}'",
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        }
+                        container.create_item(body=quarantine_item)
+                        results["quarantined"].append(quarantine_item)
                         continue
                 else:
                     processed_in_batch[uid_to_update] = unit.lower().strip()
@@ -407,17 +630,21 @@ If the same item appears multiple times with the same unit, sum the quantities a
                     unit_mismatch = stored_unit and incoming_unit and stored_unit != incoming_unit
 
                     if unit_mismatch:
-                        results["quarantined"].append({
+                        quarantine_item = {
                             "id": str(uuid.uuid4()),
                             "shop_id": shop_id,
+                            "type": "quarantine",
                             "raw_text": raw_name,
                             "quantity": qty,
                             "unit": unit,
                             "scan_type": scan_type,
                             "status": "needs_review",
                             "confidence_score": sort_result["confidence_score"] if sort_result else 0,
-                            "quarantine_reason": f"Unit mismatch: stored as '{stored_unit}', scanned as '{incoming_unit}'"
-                        })
+                            "quarantine_reason": f"Unit mismatch: stored as '{stored_unit}', scanned as '{incoming_unit}'",
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        }
+                        container.create_item(body=quarantine_item)
+                        results["quarantined"].append(quarantine_item)
                         continue
 
                     doc_id = existing_items[0]['id']
@@ -435,7 +662,21 @@ If the same item appears multiple times with the same unit, sum the quantities a
                     container.create_item(body=new_item)
                     results["clean_inventory"].append(new_item)
             else:
-                results["quarantined"].append({"id": str(uuid.uuid4()), "shop_id": shop_id, "raw_text": raw_name, "quantity": qty, "unit": unit, "scan_type": scan_type, "status": "needs_review", "confidence_score": sort_result["confidence_score"] if sort_result else 0})
+                quarantine_item = {
+                    "id": str(uuid.uuid4()),
+                    "shop_id": shop_id,
+                    "type": "quarantine",
+                    "raw_text": raw_name,
+                    "quantity": qty,
+                    "unit": unit,
+                    "scan_type": scan_type,
+                    "status": "needs_review",
+                    "confidence_score": sort_result["confidence_score"] if sort_result else 0,
+                    "quarantine_reason": "Low confidence match",
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                container.create_item(body=quarantine_item)
+                results["quarantined"].append(quarantine_item)
 
         # --- 6. RECORD IDEMPOTENCY & USAGE ---
         if scan_id:
@@ -447,19 +688,65 @@ If the same item appears multiple times with the same unit, sum the quantities a
                 "ttl": 172800  # auto-delete after 48 hours — overrides container TTL
             })
 
+        # Calculate metrics for this scan
+        items_processed_count = len(structured_items)
+        tier1_hits_count = sum(1 for r in sort_results.values() if r.get("source") == "training")
+        quarantine_count = len(results["quarantined"])
+
         if usage_records:
             full_doc = list(container.query_items(query="SELECT * FROM c WHERE c.id = @usage_id AND c.type = 'usage'", parameters=[{"name": "@usage_id", "value": usage_doc_id}], enable_cross_partition_query=True))[0]
             full_doc["scans_this_month"] += 1
+            full_doc["items_processed_this_month"] = full_doc.get("items_processed_this_month", 0) + items_processed_count
+            full_doc["tier1_hits_this_month"] = full_doc.get("tier1_hits_this_month", 0) + tier1_hits_count
+            full_doc["quarantine_this_month"] = full_doc.get("quarantine_this_month", 0) + quarantine_count
             container.upsert_item(body=full_doc)
         else:
-            container.create_item(body={"id": usage_doc_id, "shop_id": shop_id, "month": current_month, "scans_this_month": 1, "status": "active", "type": "usage"})
+            container.create_item(body={
+                "id": usage_doc_id, "shop_id": shop_id, "month": current_month, 
+                "scans_this_month": 1, "items_processed_this_month": items_processed_count,
+                "tier1_hits_this_month": tier1_hits_count, "quarantine_this_month": quarantine_count,
+                "status": "active", "type": "usage"
+            })
 
         return {"status": "success", "shop_id": shop_id, "processed_summary": {"clean": len(results["clean_inventory"]), "inbox": len(results["quarantined"])}, "data": results}
 
-    except HTTPException as e: raise e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Pipeline error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+# ── JOB STATUS ENDPOINT ──────────────────────────────────────────────────────
+# No auth needed — job_id is unguessable UUID
+# Mobile polls this after receiving job_id from /process-ledger
+
+@app.get("/job-status/{job_id}")
+def check_job_status(job_id: str = Path(..., description="Job ID returned from /process-ledger")):
+    """
+    Poll for job completion status.
+    Returns: status (queued/processing/completed/failed), progress, result (when completed)
+    """
+    # Check job status
+    status_data = get_job_status(job_id)
+    if not status_data:
+        raise HTTPException(status_code=404, detail="Job not found or expired")
+    
+    response = {
+        "job_id": job_id,
+        "status": status_data.get("status", "unknown"),
+        "updated_at": status_data.get("updated_at")
+    }
+    
+    if "progress" in status_data:
+        response["progress"] = status_data["progress"]
+    
+    # If completed or failed, include the result
+    if status_data.get("status") in ("completed", "failed"):
+        result = get_job_result(job_id)
+        if result:
+            response["result"] = result
+    
+    return response
 
 class MappedItemPayload(BaseModel): 
     shop_id: str
@@ -469,6 +756,7 @@ class MappedItemPayload(BaseModel):
     unit: str
     scan_type: str
     raw_text: str = ""  # what OCR originally read — used for training signal
+    quarantine_id: str = ""  # ID of quarantine record to resolve when owner maps this item
 
 @app.post("/sync-mapped-item")
 def sync_mapped_item(payload: MappedItemPayload, current_shop: dict = Depends(get_current_shop)):
@@ -517,14 +805,39 @@ def sync_mapped_item(payload: MappedItemPayload, current_shop: dict = Depends(ge
                 logger.warning(f"Training signal write failed (non-critical): {te}")
         # ────────────────────────────────────────────────────────────────────
 
+        # ── CLOSE QUARANTINE RECORD ──────────────────────────────────────────
+        # When owner resolves a quarantine item, mark it as resolved
+        if payload.quarantine_id and payload.quarantine_id.strip():
+            try:
+                container.patch_item(
+                    item=payload.quarantine_id,
+                    partition_key=payload.shop_id,
+                    patch_operations=[
+                        {'op': 'replace', 'path': '/status', 'value': 'resolved'},
+                        {'op': 'add', 'path': '/resolved_at', 'value': datetime.now(timezone.utc).isoformat()},
+                        {'op': 'add', 'path': '/resolved_to_uid', 'value': payload.uid}
+                    ]
+                )
+                logger.info(f"Quarantine record {payload.quarantine_id} resolved → {payload.uid}")
+            except Exception as qe:
+                # Non-critical — inventory already saved, log and continue
+                logger.warning(f"Quarantine resolution failed (non-critical): {qe}")
+        # ────────────────────────────────────────────────────────────────────
+
         return {"status": "success", "message": "Synced"}
 
-    except HTTPException as e: raise e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Sync mapped item error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Sync failed.")
 
-class CustomItemPayload(BaseModel): shop_id: str; custom_name: str; quantity: float; unit: str; scan_type: str
+class CustomItemPayload(BaseModel):
+    shop_id: str
+    custom_name: str
+    quantity: float
+    unit: str
+    scan_type: str
 
 @app.post("/create-custom-item")
 def create_custom_item(payload: CustomItemPayload, current_shop: dict = Depends(get_current_shop)):
@@ -594,7 +907,10 @@ def create_custom_item(payload: CustomItemPayload, current_shop: dict = Depends(
         raise HTTPException(status_code=500, detail="Failed to create custom item.")
 
 
-class AdjustInventoryPayload(BaseModel): shop_id: str; uid: str; new_quantity: float
+class AdjustInventoryPayload(BaseModel):
+    shop_id: str
+    uid: str
+    new_quantity: float
 
 @app.post("/adjust-inventory")
 def adjust_inventory(payload: AdjustInventoryPayload, current_shop: dict = Depends(get_current_shop)):
@@ -628,7 +944,8 @@ def adjust_inventory(payload: AdjustInventoryPayload, current_shop: dict = Depen
         )
         return {"status": "success", "message": f"Quantity updated to {payload.new_quantity}"}
 
-    except HTTPException as e: raise e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Adjust inventory error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to adjust inventory.")
@@ -647,7 +964,7 @@ def sync_custom_dictionary(current_shop: dict = Depends(get_current_shop)):
             enable_cross_partition_query=True
         ))
         return {"status": "success", "data": items}
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Failed to fetch custom dictionary.")
 
 
@@ -659,7 +976,7 @@ def get_inventory(shop_id: str = Query("shop_10065"), current_shop: dict = Depen
         query = "SELECT c.uid, c.standard_name, c.quantity, c.unit, c.last_updated FROM c WHERE c.shop_id = @shop AND c.status = 'active' AND c.type = 'inventory'"
         items = list(container.query_items(query=query, parameters=[{"name": "@shop", "value": shop_id}], enable_cross_partition_query=True))
         return {"status": "success", "total_items": len(items), "data": sorted(items, key=lambda x: x["standard_name"].lower())}
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Failed to fetch.")
 
 # ── ANALYTICS ENDPOINT ────────────────────────────────────────────────────────
@@ -712,6 +1029,26 @@ def get_analytics(month: str = Query(None), current_shop: dict = Depends(get_cur
         quarantine = list(container.query_items(query=quarantine_query, enable_cross_partition_query=True))
         quarantine_count = quarantine[0] if quarantine else 0
 
+        # 6. Items processed this month (from usage docs)
+        items_processed_query = "SELECT VALUE SUM(c.items_processed_this_month) FROM c WHERE c.type = 'usage' AND c.month = @month"
+        items_processed = list(container.query_items(query=items_processed_query, parameters=[{"name": "@month", "value": current_month}], enable_cross_partition_query=True))
+        total_items_processed = items_processed[0] if items_processed and items_processed[0] else 0
+
+        # 7. Tier1 hits this month (training signal matches)
+        tier1_query = "SELECT VALUE SUM(c.tier1_hits_this_month) FROM c WHERE c.type = 'usage' AND c.month = @month"
+        tier1_hits = list(container.query_items(query=tier1_query, parameters=[{"name": "@month", "value": current_month}], enable_cross_partition_query=True))
+        total_tier1_hits = tier1_hits[0] if tier1_hits and tier1_hits[0] else 0
+
+        # 8. Quarantine items created this month
+        quarantine_month_query = "SELECT VALUE SUM(c.quarantine_this_month) FROM c WHERE c.type = 'usage' AND c.month = @month"
+        quarantine_month = list(container.query_items(query=quarantine_month_query, parameters=[{"name": "@month", "value": current_month}], enable_cross_partition_query=True))
+        total_quarantine_this_month = quarantine_month[0] if quarantine_month and quarantine_month[0] else 0
+
+        # Calculate rates (avoid division by zero)
+        tier1_hit_rate = round(total_tier1_hits / total_items_processed, 4) if total_items_processed > 0 else 0.0
+        avg_items_per_scan = round(total_items_processed / total_scans, 2) if total_scans > 0 else 0.0
+        quarantine_rate = round(total_quarantine_this_month / total_items_processed, 4) if total_items_processed > 0 else 0.0
+
         return {
             "status": "success",
             "month": current_month,
@@ -720,10 +1057,78 @@ def get_analytics(month: str = Query(None), current_shop: dict = Depends(get_cur
                 "total_scans_this_month": total_scans,
                 "total_items_in_vault": total_items,
                 "training_signals_collected": total_signals,
-                "items_in_quarantine": quarantine_count
+                "items_in_quarantine": quarantine_count,
+                "items_processed_this_month": total_items_processed,
+                "tier1_hits_this_month": total_tier1_hits,
+                "quarantine_this_month": total_quarantine_this_month,
+                "tier1_hit_rate": tier1_hit_rate,
+                "avg_items_per_scan": avg_items_per_scan,
+                "quarantine_rate": quarantine_rate
             }
         }
     except Exception as e:
         logger.error(f"Analytics error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch analytics.")
+
+@app.get("/admin/analytics")
+def get_admin_analytics(
+    month: str = Query(None),
+    x_admin_key: str = Header(None, alias="X-Admin-Key")
+):
+    expected_admin_key = os.getenv("ADMIN_KEY", "recallai-admin-2026")
+    if x_admin_key != expected_admin_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return get_analytics(month=month)
+
+@app.get("/admin/stores")
+def get_admin_stores(x_admin_key: str = Header(None, alias="X-Admin-Key")):
+    expected_admin_key = os.getenv("ADMIN_KEY", "recallai-admin-2026")
+    if x_admin_key != expected_admin_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        container = db.get_container()
+        query = "SELECT * FROM c WHERE c.type = 'shop_account'"
+        stores = list(container.query_items(query=query, enable_cross_partition_query=True))
+        return [
+            {
+                "shop_id": store.get("shop_id") or store.get("id"),
+                "shop_name": store.get("shop_name"),
+                "phone": store.get("phone"),
+                "locality": store.get("locality"),
+                "pincode": store.get("pincode"),
+                "plan": store.get("plan"),
+                "scans_this_month": store.get("scans_this_month", 0),
+                "last_scan_date": store.get("last_scan_date"),
+            }
+            for store in stores
+        ]
+    except Exception as e:
+        logger.error(f"Admin stores error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch admin stores.")
+
+@app.get("/admin/quarantine-items")
+def get_admin_quarantine_items(x_admin_key: str = Header(None, alias="X-Admin-Key")):
+    expected_admin_key = os.getenv("ADMIN_KEY", "recallai-admin-2026")
+    if x_admin_key != expected_admin_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        container = db.get_container()
+        query = (
+            "SELECT c.raw_text, COUNT(1) as count "
+            "FROM c WHERE c.type = 'quarantine' "
+            "GROUP BY c.raw_text ORDER BY count DESC OFFSET 0 LIMIT 10"
+        )
+        items = list(container.query_items(query=query, enable_cross_partition_query=True))
+        return [
+            {
+                "raw_text": item.get("raw_text"),
+                "count": int(item.get("count") or 0),
+            }
+            for item in items
+        ]
+    except Exception as e:
+        logger.error(f"Admin quarantine items error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch quarantine items.")
 # ─────────────────────────────────────────────────────────────────────────────
