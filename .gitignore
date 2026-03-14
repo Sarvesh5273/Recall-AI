@@ -31,3 +31,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/RecallMobile/vendor/
+admin-portal/.vite
+admin-portal/dist
+admin-portal/node_modules
