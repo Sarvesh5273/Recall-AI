@@ -23,7 +23,7 @@ from payments import router as payments_router
 from circuit_breaker import sarvam_circuit, openai_circuit
 from job_queue import (
     is_queue_available, get_job_queue, get_job_status, get_job_result,
-    store_job_status, process_ledger_job
+    store_job_status, store_job_owner, get_job_owner, process_ledger_job
 )
 
 # ── SENTRY (Error Tracking) ─────────────────────────────────────────────────
@@ -472,6 +472,7 @@ async def process_ledger(
                 job_id_override=job_id,
                 job_timeout=120
             )
+            store_job_owner(job_id, shop_id)
             store_job_status(job_id, "queued", "Waiting for worker...")
             logger.info(f"Job {job_id} enqueued for shop {shop_id}")
             return {
@@ -717,15 +718,24 @@ If the same item appears multiple times with the same unit, sum the quantities a
         raise HTTPException(status_code=500, detail=str(e))
 
 # ── JOB STATUS ENDPOINT ──────────────────────────────────────────────────────
-# No auth needed — job_id is unguessable UUID
+# Protected endpoint — only job owner can read status
 # Mobile polls this after receiving job_id from /process-ledger
 
 @app.get("/job-status/{job_id}")
-def check_job_status(job_id: str = Path(..., description="Job ID returned from /process-ledger")):
+def check_job_status(
+    job_id: str = Path(..., description="Job ID returned from /process-ledger"),
+    current_shop: dict = Depends(get_current_shop),
+):
     """
     Poll for job completion status.
     Returns: status (queued/processing/completed/failed), progress, result (when completed)
     """
+    owner_shop_id = get_job_owner(job_id)
+    if not owner_shop_id:
+        raise HTTPException(status_code=404, detail="Job not found or expired")
+    if owner_shop_id != current_shop["shop_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     # Check job status
     status_data = get_job_status(job_id)
     if not status_data:
@@ -970,8 +980,9 @@ def sync_custom_dictionary(current_shop: dict = Depends(get_current_shop)):
 
 # Ensure /inventory and other endpoints use AND c.type = 'inventory'
 @app.get("/inventory")
-def get_inventory(shop_id: str = Query("shop_10065"), current_shop: dict = Depends(get_current_shop)):
+def get_inventory(current_shop: dict = Depends(get_current_shop)):
     try:
+        shop_id = current_shop["shop_id"]
         container = db.get_container()
         query = "SELECT c.uid, c.standard_name, c.quantity, c.unit, c.last_updated FROM c WHERE c.shop_id = @shop AND c.status = 'active' AND c.type = 'inventory'"
         items = list(container.query_items(query=query, parameters=[{"name": "@shop", "value": shop_id}], enable_cross_partition_query=True))
@@ -1075,14 +1086,18 @@ def get_admin_analytics(
     month: str = Query(None),
     x_admin_key: str = Header(None, alias="X-Admin-Key")
 ):
-    expected_admin_key = os.getenv("ADMIN_KEY", "recallai-admin-2026")
+    expected_admin_key = os.getenv("ADMIN_KEY")
+    if not expected_admin_key:
+        raise HTTPException(status_code=503, detail="Admin API not configured")
     if x_admin_key != expected_admin_key:
         raise HTTPException(status_code=403, detail="Forbidden")
     return get_analytics(month=month)
 
 @app.get("/admin/stores")
 def get_admin_stores(x_admin_key: str = Header(None, alias="X-Admin-Key")):
-    expected_admin_key = os.getenv("ADMIN_KEY", "recallai-admin-2026")
+    expected_admin_key = os.getenv("ADMIN_KEY")
+    if not expected_admin_key:
+        raise HTTPException(status_code=503, detail="Admin API not configured")
     if x_admin_key != expected_admin_key:
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -1109,7 +1124,9 @@ def get_admin_stores(x_admin_key: str = Header(None, alias="X-Admin-Key")):
 
 @app.get("/admin/quarantine-items")
 def get_admin_quarantine_items(x_admin_key: str = Header(None, alias="X-Admin-Key")):
-    expected_admin_key = os.getenv("ADMIN_KEY", "recallai-admin-2026")
+    expected_admin_key = os.getenv("ADMIN_KEY")
+    if not expected_admin_key:
+        raise HTTPException(status_code=503, detail="Admin API not configured")
     if x_admin_key != expected_admin_key:
         raise HTTPException(status_code=403, detail="Forbidden")
 

@@ -89,6 +89,23 @@ def get_job_status(job_id: str):
             return json.loads(data)
     return None
 
+def store_job_owner(job_id: str, shop_id: str):
+    """Store owning shop_id for job authorization checks."""
+    conn = get_redis_connection()
+    if conn:
+        conn.setex(f"job_owner:{job_id}", JOB_RESULT_TTL, shop_id)
+
+def get_job_owner(job_id: str):
+    """Get owning shop_id for a job."""
+    conn = get_redis_connection()
+    if conn:
+        data = conn.get(f"job_owner:{job_id}")
+        if data:
+            if isinstance(data, bytes):
+                return data.decode("utf-8")
+            return data
+    return None
+
 
 # ── Background Job Function ──────────────────────────────────────────────────
 # This runs in the RQ worker process, not in the FastAPI server

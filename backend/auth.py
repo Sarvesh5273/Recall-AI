@@ -6,10 +6,12 @@ from jose import JWTError, jwt
 import uuid
 import random
 import os
+import logging
 from database import db
 
 router = APIRouter()
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
 _env = os.getenv("ENV", "development")
@@ -54,6 +56,12 @@ def normalize_phone(phone: str) -> str:
         elif len(phone) == 10:
             phone = "+91" + phone
     return phone
+
+def mask_phone(phone: str) -> str:
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if len(digits) >= 4:
+        return f"****{digits[-4:]}"
+    return "****"
 
 def create_jwt(shop_id: str, phone: str) -> str:
     payload = {
@@ -147,14 +155,14 @@ def send_otp(payload: SendOTPPayload):
                 from_=from_number,
                 to=phone
             )
-            print(f"📱 OTP SMS sent via Twilio to {phone}")
+            logger.info("OTP sent via Twilio to %s", mask_phone(phone))
         except Exception as e:
-            print(f"❌ Twilio SMS failed: {e}")
+            logger.error("Twilio SMS failed for %s: %s", mask_phone(phone), e, exc_info=True)
             raise HTTPException(status_code=500, detail="Failed to send OTP. Try again.")
         # ─────────────────────────────────────────────────────────────────────
     else:
-        # Dev mode — OTP printed to console, no SMS sent
-        print(f"🔐 [DEV] OTP for {phone}: {otp}")
+        # Dev mode — no SMS sent
+        logger.info("OTP sent in development mode to %s", mask_phone(phone))
 
     return {
         "status": "success",
@@ -217,7 +225,7 @@ def register(payload: RegisterPayload):
 
     # 7. Return JWT
     token = create_jwt(shop_id, phone)
-    print(f"✅ New shop registered: {shop_id} — {payload.shop_name}")
+    logger.info("New shop registered: %s", shop_id)
 
     return {
         "status": "success",
@@ -268,7 +276,7 @@ def login_otp(payload: LoginOTPPayload):
     _otp_store.pop(phone, None)
 
     token = create_jwt(account["shop_id"], phone)
-    print(f"🔑 OTP Login: {account['shop_id']} — {account['shop_name']}")
+    logger.info("OTP login successful for shop %s", account["shop_id"])
 
     return {
         "status": "success",
@@ -330,5 +338,5 @@ def get_usage(current_shop: dict = Depends(get_current_shop)):
             "scan_limit": scan_limit
         }
     except Exception as e:
-        print(f"Usage fetch error: {e}")
+        logger.error("Usage fetch error for shop %s: %s", shop_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
