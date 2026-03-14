@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 from azure.storage.blob import BlobServiceClient
+from azure.cosmos import exceptions as cosmos_exceptions
 from pydantic import BaseModel
 from database import db
 from auth import router as auth_router, get_current_shop
@@ -79,7 +80,8 @@ SARVAM_HEADERS = {"api-subscription-key": os.getenv("SARVAM_API_KEY")}
 azure_ai_client = AzureOpenAI(
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    timeout=45.0,
 )
 
 blob_service_client = None
@@ -107,8 +109,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type", "X-Admin-Key"],
 )
 
 # Register auth routes
@@ -267,7 +269,8 @@ Catalog: {_CATALOG_FOR_GPT}"""},
                 ],
                 response_format={"type": "json_object"},
                 temperature=0,
-                max_tokens=50 * len(tier1_misses)  # ~50 tokens per item
+                max_tokens=50 * len(tier1_misses),  # ~50 tokens per item
+                timeout=45.0,
             )
             
             gpt_result = json.loads(gpt_response.choices[0].message.content)
@@ -376,7 +379,8 @@ Rules:
             ],
             response_format={"type": "json_object"},
             temperature=0,
-            max_tokens=60
+            max_tokens=60,
+            timeout=45.0,
         )
 
         result = json.loads(gpt_match.choices[0].message.content)
@@ -418,14 +422,7 @@ async def process_ledger(
     shop_id = current_shop["shop_id"]
     check_rate_limit(shop_id, "process-ledger")
     container = db.get_container()
-    
-    # --- 1. BACKEND IDEMPOTENCY GATEKEEPER ---
-    if scan_id:
-        idem_query = "SELECT * FROM c WHERE c.id = @scan_id AND c.shop_id = @shop AND c.type = 'processed_scan'"
-        existing_scans = list(container.query_items(query=idem_query, parameters=[{"name": "@scan_id", "value": scan_id}, {"name": "@shop", "value": shop_id}], enable_cross_partition_query=True))
-        if existing_scans:
-            logger.info(f"Idempotency Triggered: Scan {scan_id} already processed. Returning 200 OK.")
-            return {"status": "success", "message": "Already processed", "data": {"clean_inventory": [], "quarantined": []}}
+    scan_marker_created = False
 
     # --- 2. BUSINESS GATEKEEPER ---
     current_month = datetime.now(timezone.utc).strftime("%Y-%m")
@@ -438,6 +435,22 @@ async def process_ledger(
     monthly_limit = PLAN_MONTHLY_LIMITS.get(plan, 60)
     if monthly_limit is not None and current_scans >= monthly_limit:
         raise HTTPException(status_code=403, detail=f"MONTHLY_LIMIT_EXCEEDED:{plan.upper()}:{monthly_limit}")
+
+    # --- 3. BACKEND IDEMPOTENCY GATEKEEPER (ATOMIC) ---
+    if scan_id:
+        try:
+            container.create_item(body={
+                "id": scan_id,
+                "shop_id": shop_id,
+                "type": "processed_scan",
+                "status": "processing",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "ttl": 172800,
+            })
+            scan_marker_created = True
+        except cosmos_exceptions.CosmosResourceExistsError:
+            logger.info(f"Idempotency Triggered: Scan {scan_id} already processed. Returning 200 OK.")
+            return {"status": "success", "message": "Already processed", "data": {"clean_inventory": [], "quarantined": []}}
 
     # --- 3. ARCHIVE ---
     image_bytes = await file.read()
@@ -523,7 +536,9 @@ Never use: 'kilogram', 'kilo' — convert to 'kg'.
 If the same item appears multiple times with the same unit, sum the quantities and return it once."""},
                 {"role": "user", "content": f"Convert this OCR text to JSON array 'items': {raw_markdown}"}
             ],
-            response_format={"type": "json_object"}, temperature=0.1
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            timeout=45.0,
         )
         logger.info(f"GPT-4o-mini: {time.time()-t_gpt:.2f}s")
         openai_circuit.record_success()
@@ -680,40 +695,62 @@ If the same item appears multiple times with the same unit, sum the quantities a
                 results["quarantined"].append(quarantine_item)
 
         # --- 6. RECORD IDEMPOTENCY & USAGE ---
-        if scan_id:
-            container.create_item(body={
-                "id": scan_id,
-                "shop_id": shop_id,
-                "type": "processed_scan",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "ttl": 172800  # auto-delete after 48 hours — overrides container TTL
-            })
+        if scan_id and scan_marker_created:
+            container.patch_item(
+                item=scan_id,
+                partition_key=shop_id,
+                patch_operations=[
+                    {"op": "replace", "path": "/status", "value": "completed"},
+                    {"op": "add", "path": "/processed_at", "value": datetime.now(timezone.utc).isoformat()},
+                ],
+            )
 
         # Calculate metrics for this scan
         items_processed_count = len(structured_items)
         tier1_hits_count = sum(1 for r in sort_results.values() if r.get("source") == "training")
         quarantine_count = len(results["quarantined"])
 
-        if usage_records:
-            full_doc = list(container.query_items(query="SELECT * FROM c WHERE c.id = @usage_id AND c.type = 'usage'", parameters=[{"name": "@usage_id", "value": usage_doc_id}], enable_cross_partition_query=True))[0]
-            full_doc["scans_this_month"] += 1
-            full_doc["items_processed_this_month"] = full_doc.get("items_processed_this_month", 0) + items_processed_count
-            full_doc["tier1_hits_this_month"] = full_doc.get("tier1_hits_this_month", 0) + tier1_hits_count
-            full_doc["quarantine_this_month"] = full_doc.get("quarantine_this_month", 0) + quarantine_count
-            container.upsert_item(body=full_doc)
-        else:
+        try:
             container.create_item(body={
-                "id": usage_doc_id, "shop_id": shop_id, "month": current_month, 
-                "scans_this_month": 1, "items_processed_this_month": items_processed_count,
-                "tier1_hits_this_month": tier1_hits_count, "quarantine_this_month": quarantine_count,
-                "status": "active", "type": "usage"
+                "id": usage_doc_id,
+                "shop_id": shop_id,
+                "month": current_month,
+                "scans_this_month": 1,
+                "items_processed_this_month": items_processed_count,
+                "tier1_hits_this_month": tier1_hits_count,
+                "quarantine_this_month": quarantine_count,
+                "status": "active",
+                "type": "usage",
+                "last_updated": datetime.now(timezone.utc).isoformat(),
             })
+        except cosmos_exceptions.CosmosResourceExistsError:
+            container.patch_item(
+                item=usage_doc_id,
+                partition_key=shop_id,
+                patch_operations=[
+                    {"op": "incr", "path": "/scans_this_month", "value": 1},
+                    {"op": "incr", "path": "/items_processed_this_month", "value": items_processed_count},
+                    {"op": "incr", "path": "/tier1_hits_this_month", "value": tier1_hits_count},
+                    {"op": "incr", "path": "/quarantine_this_month", "value": quarantine_count},
+                    {"op": "replace", "path": "/last_updated", "value": datetime.now(timezone.utc).isoformat()},
+                ],
+            )
 
         return {"status": "success", "shop_id": shop_id, "processed_summary": {"clean": len(results["clean_inventory"]), "inbox": len(results["quarantined"])}, "data": results}
 
     except HTTPException:
+        if scan_id and scan_marker_created:
+            try:
+                container.delete_item(item=scan_id, partition_key=shop_id)
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to clear idempotency marker after HTTPException: {cleanup_err}")
         raise
     except Exception as e:
+        if scan_id and scan_marker_created:
+            try:
+                container.delete_item(item=scan_id, partition_key=shop_id)
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to clear idempotency marker after failure: {cleanup_err}")
         logger.error(f"Pipeline error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 

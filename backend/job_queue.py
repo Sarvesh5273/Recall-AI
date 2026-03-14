@@ -10,6 +10,7 @@ import logging
 import base64
 import requests
 from datetime import datetime, timezone
+from azure.cosmos import exceptions as cosmos_exceptions
 from redis import Redis
 from rq import Queue
 
@@ -133,6 +134,7 @@ def process_ledger_job(
     from openai import AzureOpenAI
     
     store_job_status(job_id, "processing", "Starting OCR...")
+    container = None
     
     try:
         # Decode image bytes
@@ -145,7 +147,8 @@ def process_ledger_job(
         azure_ai_client = AzureOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            timeout=45.0,
         )
         
         container = db.get_container()
@@ -160,7 +163,7 @@ def process_ledger_job(
         
         files = {"file": (filename, image_bytes, content_type)}
         t_sarvam = time.time()
-        response = requests.post(SARVAM_API_URL, headers=SARVAM_HEADERS, files=files, data={"prompt_type": "default_ocr"}, timeout=45)
+        response = requests.post(SARVAM_API_URL, headers=SARVAM_HEADERS, files=files, data={"prompt_type": "default_ocr"}, timeout=30.0)
         logger.info(f"[Job {job_id}] Sarvam OCR: {time.time()-t_sarvam:.2f}s")
         
         if response.status_code != 200:
@@ -197,7 +200,9 @@ Never use: 'kilogram', 'kilo' — convert to 'kg'.
 If the same item appears multiple times with the same unit, sum the quantities and return it once."""},
                 {"role": "user", "content": f"Convert this OCR text to JSON array 'items': {raw_markdown}"}
             ],
-            response_format={"type": "json_object"}, temperature=0.1
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            timeout=45.0,
         )
         logger.info(f"[Job {job_id}] GPT-4o-mini: {time.time()-t_gpt:.2f}s")
         openai_circuit.record_success()
@@ -359,31 +364,42 @@ If the same item appears multiple times with the same unit, sum the quantities a
         
         # ── 5. RECORD IDEMPOTENCY & USAGE ────────────────────────────────────
         if scan_id:
-            container.create_item(body={
-                "id": scan_id,
-                "shop_id": shop_id,
-                "type": "processed_scan",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "ttl": 172800
-            })
-        
-        if usage_exists:
-            full_doc = list(container.query_items(
-                query="SELECT * FROM c WHERE c.id = @usage_id AND c.type = 'usage'",
-                parameters=[{"name": "@usage_id", "value": usage_doc_id}],
-                enable_cross_partition_query=True
-            ))[0]
-            full_doc["scans_this_month"] += 1
-            container.upsert_item(body=full_doc)
-        else:
+            try:
+                container.patch_item(
+                    item=scan_id,
+                    partition_key=shop_id,
+                    patch_operations=[
+                        {"op": "replace", "path": "/status", "value": "completed"},
+                        {"op": "add", "path": "/processed_at", "value": datetime.now(timezone.utc).isoformat()},
+                    ],
+                )
+            except cosmos_exceptions.CosmosResourceNotFoundError:
+                container.create_item(body={
+                    "id": scan_id,
+                    "shop_id": shop_id,
+                    "type": "processed_scan",
+                    "status": "completed",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "ttl": 172800,
+                })
+
+        try:
             container.create_item(body={
                 "id": usage_doc_id,
                 "shop_id": shop_id,
                 "month": current_month,
                 "scans_this_month": 1,
                 "status": "active",
-                "type": "usage"
+                "type": "usage",
             })
+        except cosmos_exceptions.CosmosResourceExistsError:
+            container.patch_item(
+                item=usage_doc_id,
+                partition_key=shop_id,
+                patch_operations=[
+                    {"op": "incr", "path": "/scans_this_month", "value": 1},
+                ],
+            )
         
         # ── 6. STORE RESULT ──────────────────────────────────────────────────
         final_result = {
@@ -401,5 +417,10 @@ If the same item appears multiple times with the same unit, sum the quantities a
         
     except Exception as e:
         logger.error(f"[Job {job_id}] Failed: {e}", exc_info=True)
+        if scan_id and container is not None:
+            try:
+                container.delete_item(item=scan_id, partition_key=shop_id)
+            except Exception as cleanup_err:
+                logger.warning(f"[Job {job_id}] Failed to clear idempotency marker: {cleanup_err}")
         store_job_result(job_id, {"status": "error", "error": str(e)})
         store_job_status(job_id, "failed")

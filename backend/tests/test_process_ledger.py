@@ -3,7 +3,8 @@
 import pytest
 import json
 import io
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
+from azure.cosmos import exceptions as cosmos_exceptions
 
 
 @pytest.fixture
@@ -19,13 +20,14 @@ class TestIdempotency:
 
     def test_duplicate_scan_id_returns_already_processed(self, mock_cosmos_container, mock_training_container, auth_headers):
         """Duplicate scan_id → returns 'Already processed', no double-count."""
-        # Simulate existing processed scan record
-        def query_side_effect(query, parameters=None, **kwargs):
-            if parameters and any(p.get("name") == "@scan_id" for p in parameters):
-                return iter([{"id": "existing_scan_123", "type": "processed_scan"}])
-            return iter([])
-        
-        mock_cosmos_container.query_items.side_effect = query_side_effect
+        # Simulate idempotency conflict on processed_scan create
+        def create_side_effect(body, **kwargs):
+            if body.get("type") == "processed_scan" and body.get("id") == "DUPLICATE_SCAN_123":
+                raise cosmos_exceptions.CosmosResourceExistsError(status_code=409, message="Conflict")
+            return {}
+
+        mock_cosmos_container.create_item.side_effect = create_side_effect
+        mock_cosmos_container.query_items.return_value = iter([])
         mock_training_container.query_items.return_value = iter([])
         
         with patch("main.get_blob_container_client"), \
@@ -60,7 +62,7 @@ class TestIdempotency:
         
         with patch("main.get_blob_container_client") as mock_blob_getter, \
              patch("main.is_queue_available", return_value=False), \
-             patch("requests.post") as mock_sarvam, \
+             patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_sarvam, \
              patch("main.azure_ai_client") as mock_openai:
             
             mock_blob_container = MagicMock()
@@ -126,7 +128,7 @@ class TestIdempotencyEdgeCases:
         
         with patch("main.get_blob_container_client") as mock_blob_getter, \
              patch("main.is_queue_available", return_value=False), \
-             patch("requests.post") as mock_sarvam, \
+             patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_sarvam, \
              patch("main.azure_ai_client") as mock_openai:
             
             mock_blob_container = MagicMock()
