@@ -245,6 +245,7 @@ def login_otp(payload: LoginOTPPayload):
     routes to registration flow.
     """
     phone = normalize_phone(payload.phone)
+    check_rate_limit(phone)
 
     # 1. Validate OTP
     stored = _otp_store.get(phone)
@@ -257,6 +258,7 @@ def login_otp(payload: LoginOTPPayload):
         raise HTTPException(status_code=400, detail="OTP expired. Request a new one.")
 
     if stored["otp"] != payload.otp.strip():
+        record_failed_attempt(phone)
         raise HTTPException(status_code=400, detail="Incorrect OTP.")
 
 
@@ -274,6 +276,7 @@ def login_otp(payload: LoginOTPPayload):
 
     account = accounts[0]
     _otp_store.pop(phone, None)
+    clear_attempts(phone)
 
     token = create_jwt(account["shop_id"], phone)
     logger.info("OTP login successful for shop %s", account["shop_id"])

@@ -314,98 +314,6 @@ Catalog: {_CATALOG_FOR_GPT}"""},
     
     return results
 
-def sort_extracted_item(raw_ai_text: str, shop_id: str = None):
-    if not raw_ai_text:
-        return {"routing": "QUARANTINE_INBOX", "raw_text": "Unknown", "confidence_score": 0}
-
-    normalized = raw_ai_text.strip().lower()
-
-    # ── STEP 1: Training signals — exact lookup ───────────────────────────────
-    # If owner already mapped this OCR text before → use instantly, no AI needed
-    if shop_id:
-        try:
-            results = list(db.get_training_container().query_items(
-                query="""
-                    SELECT c.mapped_uid, c.mapped_to FROM c
-                    WHERE c.type = 'training_signal'
-                      AND c.shop_id = @shop_id
-                      AND LOWER(c.raw_ocr) = @raw_ocr
-                """,
-                parameters=[
-                    {"name": "@shop_id", "value": shop_id},
-                    {"name": "@raw_ocr",  "value": normalized}
-                ],
-                enable_cross_partition_query=True
-            ))
-            if results:
-                hit = results[0]
-                logger.info(f"Training hit: '{raw_ai_text}' → '{hit['mapped_to']}' (learned from owner)")
-                return {
-                    "routing": "CLEAN_INVENTORY",
-                    "uid": hit["mapped_uid"],
-                    "standard_name": raw_ai_text.strip(),
-                    "confidence_score": 100,
-                    "source": "training"
-                }
-        except Exception as e:
-            logger.warning(f"Training signal lookup failed (non-critical): {e}")
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # ── STEP 2: GPT-4o mini — multilingual semantic match ────────────────────
-    # Fuzzy matching fails for multilingual text (e.g. "khand" → wrong item).
-    # GPT understands Gujarati/Hindi/Marathi natively — far more accurate.
-    # Only fires when training signal misses → cost is ~₹0.008 per uncertain item.
-    try:
-        catalog_list = [{"uid": uid, "name": data["en"], "aliases": data.get("aliases", [])} for uid, data in MASTER_DICTIONARY.items()]
-        catalog_str = json.dumps(catalog_list, ensure_ascii=False)
-
-        gpt_match = azure_ai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": """You are a multilingual product matcher for Indian kirana stores.
-Given a raw OCR product name (may be in English, Gujarati, Hindi, or Marathi) and a catalog,
-return ONLY a JSON object with:
-- "uid": the matching catalog uid, or "unknown" if no confident match
-- "confidence": a number 0-100
-
-Rules:
-- Match against both "name" AND "aliases" in the catalog
-- Aliases include regional spellings: "khand","chini","ખાંડ","साखर" all match Sugar
-- "दही" matches alias "दही" in Curd, "mithu" matches Salt, "ઘઉં" matches Wheat
-- Only return a uid from this catalog — NEVER guess outside the list
-- Only return a uid if confident (confidence >= 85)
-- If ambiguous or not in catalog → return uid: "unknown"
-- Return ONLY the JSON object, nothing else"""},
-                {"role": "user", "content": f"Product: \"{raw_ai_text}\"\nCatalog: {catalog_str}"}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0,
-            max_tokens=60,
-            timeout=45.0,
-        )
-
-        result = json.loads(gpt_match.choices[0].message.content)
-        matched_uid = result.get("uid", "unknown")
-        confidence = result.get("confidence", 0)
-
-        logger.info(f"GPT match: '{raw_ai_text}' → uid={matched_uid} confidence={confidence}")
-
-        if matched_uid != "unknown" and matched_uid in MASTER_DICTIONARY and confidence >= 85:
-            return {
-                "routing": "CLEAN_INVENTORY",
-                "uid": matched_uid,
-                "standard_name": raw_ai_text.strip(),  # keep original text — owner's language
-                "confidence_score": confidence,
-                "source": "gpt"
-            }
-    except Exception as e:
-        logger.warning(f"GPT match failed (non-critical): {e}")
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # ── STEP 3: QUARANTINE ────────────────────────────────────────────────────
-    # GPT couldn't match → owner maps manually → becomes a training signal
-    return {"routing": "QUARANTINE_INBOX", "raw_text": raw_ai_text, "confidence_score": 0}
-
 def safe_float(value, default=1.0):
     try:
         return float(value)
@@ -1172,26 +1080,22 @@ def get_analytics(month: str = Query(None), current_shop: dict = Depends(get_cur
         logger.error(f"Analytics error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch analytics.")
 
+def verify_admin_key(x_admin_key: str = Header(None, alias="X-Admin-Key")):
+    expected = os.getenv("ADMIN_KEY")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Admin API not configured")
+    if x_admin_key != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
 @app.get("/admin/analytics")
 def get_admin_analytics(
     month: str = Query(None),
-    x_admin_key: str = Header(None, alias="X-Admin-Key")
+    _: None = Depends(verify_admin_key),
 ):
-    expected_admin_key = os.getenv("ADMIN_KEY")
-    if not expected_admin_key:
-        raise HTTPException(status_code=503, detail="Admin API not configured")
-    if x_admin_key != expected_admin_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
     return get_analytics(month=month)
 
 @app.get("/admin/stores")
-def get_admin_stores(x_admin_key: str = Header(None, alias="X-Admin-Key")):
-    expected_admin_key = os.getenv("ADMIN_KEY")
-    if not expected_admin_key:
-        raise HTTPException(status_code=503, detail="Admin API not configured")
-    if x_admin_key != expected_admin_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
+def get_admin_stores(_: None = Depends(verify_admin_key)):
     try:
         container = db.get_container()
         query = "SELECT * FROM c WHERE c.type = 'shop_account'"
@@ -1214,13 +1118,7 @@ def get_admin_stores(x_admin_key: str = Header(None, alias="X-Admin-Key")):
         raise HTTPException(status_code=500, detail="Failed to fetch admin stores.")
 
 @app.get("/admin/quarantine-items")
-def get_admin_quarantine_items(x_admin_key: str = Header(None, alias="X-Admin-Key")):
-    expected_admin_key = os.getenv("ADMIN_KEY")
-    if not expected_admin_key:
-        raise HTTPException(status_code=503, detail="Admin API not configured")
-    if x_admin_key != expected_admin_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
+def get_admin_quarantine_items(_: None = Depends(verify_admin_key)):
     try:
         container = db.get_container()
         query = (
