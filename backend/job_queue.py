@@ -225,6 +225,20 @@ If the same item appears multiple times with the same unit, sum the quantities a
         
         custom_items_query = "SELECT c.uid, c.standard_name FROM c WHERE c.shop_id = @shop AND STARTSWITH(c.uid, 'custom_') AND c.status = 'active' AND c.type = 'inventory'"
         custom_items = list(container.query_items(query=custom_items_query, parameters=[{"name": "@shop", "value": shop_id}], enable_cross_partition_query=True))
+        inventory_query = (
+            "SELECT c.id, c.shop_id, c.uid, c.standard_name, c.quantity, c.unit, c.status, c.type, c.last_updated "
+            "FROM c WHERE c.shop_id = @shop AND c.status = 'active' AND c.type = 'inventory'"
+        )
+        inventory_docs = list(
+            container.query_items(
+                query=inventory_query,
+                parameters=[{"name": "@shop", "value": shop_id}],
+                enable_cross_partition_query=True,
+            )
+        )
+        inventory_by_uid = {doc["uid"]: doc for doc in inventory_docs if doc.get("uid")}
+        pending_inventory_upserts = {}
+        pending_quarantine_writes = []
         
         results = {"clean_inventory": [], "quarantined": []}
         processed_in_batch: dict = {}
@@ -270,7 +284,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
                             "quarantine_reason": "Duplicate in same ledger — verify manually",
                             "timestamp": datetime.now(timezone.utc).isoformat()
                         }
-                        container.create_item(body=quarantine_item)
+                        pending_quarantine_writes.append(quarantine_item)
                         results["quarantined"].append(quarantine_item)
                         continue
                     else:
@@ -287,7 +301,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
                             "quarantine_reason": f"Unit mismatch in same ledger: '{prev_unit}' vs '{unit}'",
                             "timestamp": datetime.now(timezone.utc).isoformat()
                         }
-                        container.create_item(body=quarantine_item)
+                        pending_quarantine_writes.append(quarantine_item)
                         results["quarantined"].append(quarantine_item)
                         continue
                 else:
@@ -295,11 +309,10 @@ If the same item appears multiple times with the same unit, sum the quantities a
             
             # Update or create inventory
             if uid_to_update:
-                query = "SELECT c.id, c.unit FROM c WHERE c.shop_id = @shop AND c.uid = @uid AND c.status = 'active' AND c.type = 'inventory'"
-                existing_items = list(container.query_items(query=query, parameters=[{"name": "@shop", "value": shop_id}, {"name": "@uid", "value": uid_to_update}], enable_cross_partition_query=True))
+                existing_item = inventory_by_uid.get(uid_to_update)
                 
-                if existing_items:
-                    stored_unit = existing_items[0].get("unit", "").lower().strip()
+                if existing_item:
+                    stored_unit = existing_item.get("unit", "").lower().strip()
                     incoming_unit = unit.lower().strip()
                     unit_mismatch = stored_unit and incoming_unit and stored_unit != incoming_unit
                     
@@ -317,19 +330,13 @@ If the same item appears multiple times with the same unit, sum the quantities a
                             "quarantine_reason": f"Unit mismatch: stored as '{stored_unit}', scanned as '{incoming_unit}'",
                             "timestamp": datetime.now(timezone.utc).isoformat()
                         }
-                        container.create_item(body=quarantine_item)
+                        pending_quarantine_writes.append(quarantine_item)
                         results["quarantined"].append(quarantine_item)
                         continue
                     
-                    doc_id = existing_items[0]['id']
-                    container.patch_item(
-                        item=doc_id,
-                        partition_key=shop_id,
-                        patch_operations=[
-                            {'op': 'incr', 'path': '/quantity', 'value': qty_math},
-                            {'op': 'replace', 'path': '/last_updated', 'value': datetime.now(timezone.utc).isoformat()}
-                        ]
-                    )
+                    existing_item["quantity"] = safe_float(existing_item.get("quantity", 0), 0) + qty_math
+                    existing_item["last_updated"] = datetime.now(timezone.utc).isoformat()
+                    pending_inventory_upserts[uid_to_update] = existing_item
                     results["clean_inventory"].append({"uid": uid_to_update, "updated": True})
                 else:
                     new_item = {
@@ -343,7 +350,8 @@ If the same item appears multiple times with the same unit, sum the quantities a
                         "type": "inventory",
                         "last_updated": datetime.now(timezone.utc).isoformat()
                     }
-                    container.create_item(body=new_item)
+                    inventory_by_uid[uid_to_update] = new_item
+                    pending_inventory_upserts[uid_to_update] = new_item
                     results["clean_inventory"].append(new_item)
             else:
                 quarantine_item = {
@@ -359,8 +367,14 @@ If the same item appears multiple times with the same unit, sum the quantities a
                     "quarantine_reason": "Low confidence match",
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
-                container.create_item(body=quarantine_item)
+                pending_quarantine_writes.append(quarantine_item)
                 results["quarantined"].append(quarantine_item)
+
+        for quarantine_item in pending_quarantine_writes:
+            container.create_item(body=quarantine_item)
+
+        for inventory_doc in pending_inventory_upserts.values():
+            container.upsert_item(body=inventory_doc)
         
         # ── 5. RECORD IDEMPOTENCY & USAGE ────────────────────────────────────
         if scan_id:

@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import time
 from dotenv import load_dotenv
@@ -25,6 +26,30 @@ def cosmos_retry(func):
                 else:
                     raise
     return wrapper
+
+# ── COSMOS INDEXING GUIDANCE ──────────────────────────────────────────────────
+# Apply this policy in Azure Portal (Data Explorer → Scale & Settings → Indexing Policy).
+# These composite indexes map to frequent production query filters:
+# - shop_id + type
+# - shop_id + type + status
+# - shop_id + type + month
+# - shop_id + uid + type
+# This helper only documents the recommended policy; it does not mutate Azure resources.
+def print_recommended_indexes():
+    policy = {
+        "indexingMode": "consistent",
+        "automatic": True,
+        "includedPaths": [{"path": "/*"}],
+        "excludedPaths": [{"path": "/\"_etag\"/?"}],
+        "compositeIndexes": [
+            [{"path": "/shop_id", "order": "ascending"}, {"path": "/type", "order": "ascending"}],
+            [{"path": "/shop_id", "order": "ascending"}, {"path": "/type", "order": "ascending"}, {"path": "/status", "order": "ascending"}],
+            [{"path": "/shop_id", "order": "ascending"}, {"path": "/type", "order": "ascending"}, {"path": "/month", "order": "ascending"}],
+            [{"path": "/shop_id", "order": "ascending"}, {"path": "/uid", "order": "ascending"}, {"path": "/type", "order": "ascending"}],
+        ],
+    }
+    print(json.dumps(policy, indent=2))
+    return policy
 
 class CosmosDBConnector:
     _instance = None

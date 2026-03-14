@@ -1,4 +1,5 @@
 import os
+import asyncio
 import httpx
 import json
 import uuid
@@ -411,6 +412,10 @@ def safe_float(value, default=1.0):
     except (ValueError, TypeError):
         return default
 
+async def run_blocking(func, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+
 # 2. Main Processing Pipeline
 @app.post("/process-ledger")
 async def process_ledger(
@@ -421,14 +426,22 @@ async def process_ledger(
 ):
     shop_id = current_shop["shop_id"]
     check_rate_limit(shop_id, "process-ledger")
-    container = db.get_container()
+    container = await run_blocking(db.get_container)
     scan_marker_created = False
 
     # --- 2. BUSINESS GATEKEEPER ---
     current_month = datetime.now(timezone.utc).strftime("%Y-%m")
     usage_doc_id = f"usage_{shop_id}_{current_month}"
     usage_query = "SELECT c.scans_this_month FROM c WHERE c.id = @usage_id AND c.type = 'usage'"
-    usage_records = list(container.query_items(query=usage_query, parameters=[{"name": "@usage_id", "value": usage_doc_id}], enable_cross_partition_query=True))
+    usage_records = await run_blocking(
+        lambda: list(
+            container.query_items(
+                query=usage_query,
+                parameters=[{"name": "@usage_id", "value": usage_doc_id}],
+                enable_cross_partition_query=True,
+            )
+        )
+    )
     current_scans = usage_records[0].get("scans_this_month", 0) if usage_records else 0
 
     plan = current_shop.get("plan", "free")
@@ -439,14 +452,17 @@ async def process_ledger(
     # --- 3. BACKEND IDEMPOTENCY GATEKEEPER (ATOMIC) ---
     if scan_id:
         try:
-            container.create_item(body={
-                "id": scan_id,
-                "shop_id": shop_id,
-                "type": "processed_scan",
-                "status": "processing",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "ttl": 172800,
-            })
+            await run_blocking(
+                container.create_item,
+                body={
+                    "id": scan_id,
+                    "shop_id": shop_id,
+                    "type": "processed_scan",
+                    "status": "processing",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "ttl": 172800,
+                },
+            )
             scan_marker_created = True
         except cosmos_exceptions.CosmosResourceExistsError:
             logger.info(f"Idempotency Triggered: Scan {scan_id} already processed. Returning 200 OK.")
@@ -456,7 +472,12 @@ async def process_ledger(
     image_bytes = await file.read()
     unique_filename = f"{shop_id}_{uuid.uuid4().hex}_{file.filename}"
     try:
-        get_blob_container_client().get_blob_client(unique_filename).upload_blob(image_bytes, overwrite=True)
+        await run_blocking(
+            lambda: get_blob_container_client().get_blob_client(unique_filename).upload_blob(
+                image_bytes,
+                overwrite=True,
+            )
+        )
     except HTTPException:
         logger.warning("Blob storage unavailable, skipping archive")
     except Exception as e:
@@ -465,11 +486,12 @@ async def process_ledger(
     # --- 4. ASYNC JOB QUEUE (if available) ---
     # Enqueue heavy processing (OCR + GPT + matching) and return immediately
     # Mobile polls /job-status/{job_id} for results
-    if is_queue_available():
+    if await run_blocking(is_queue_available):
         job_id = str(uuid.uuid4())
         try:
-            queue = get_job_queue()
-            queue.enqueue(
+            queue = await run_blocking(get_job_queue)
+            await run_blocking(
+                queue.enqueue,
                 process_ledger_job,
                 job_id=job_id,
                 shop_id=shop_id,
@@ -483,10 +505,10 @@ async def process_ledger(
                 usage_doc_id=usage_doc_id,
                 usage_exists=bool(usage_records),
                 job_id_override=job_id,
-                job_timeout=120
+                job_timeout=120,
             )
-            store_job_owner(job_id, shop_id)
-            store_job_status(job_id, "queued", "Waiting for worker...")
+            await run_blocking(store_job_owner, job_id, shop_id)
+            await run_blocking(store_job_status, job_id, "queued", "Waiting for worker...")
             logger.info(f"Job {job_id} enqueued for shop {shop_id}")
             return {
                 "status": "processing",
@@ -520,10 +542,11 @@ async def process_ledger(
             raise HTTPException(status_code=503, detail="OpenAI temporarily unavailable (circuit open)")
 
         t_gpt = time.time()
-        gpt_response = azure_ai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": """You output only valid JSON containing an 'items' array.
+        gpt_response = await run_blocking(
+            lambda: azure_ai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": """You output only valid JSON containing an 'items' array.
 Each item must have: raw_name (string), quantity (number), unit (string).
 Rules for unit normalization — always use these exact unit strings:
 - Weight: use 'kg' for kilograms, 'g' for grams
@@ -534,11 +557,12 @@ Never use: 'units', 'packets', 'nos', 'numbers', 'packet' — convert them to 'p
 Never use: 'litre', 'liter', 'ltr' — convert to 'L'.
 Never use: 'kilogram', 'kilo' — convert to 'kg'.
 If the same item appears multiple times with the same unit, sum the quantities and return it once."""},
-                {"role": "user", "content": f"Convert this OCR text to JSON array 'items': {raw_markdown}"}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,
-            timeout=45.0,
+                    {"role": "user", "content": f"Convert this OCR text to JSON array 'items': {raw_markdown}"}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                timeout=45.0,
+            )
         )
         logger.info(f"GPT-4o-mini: {time.time()-t_gpt:.2f}s")
         openai_circuit.record_success()
@@ -552,7 +576,32 @@ If the same item appears multiple times with the same unit, sum the quantities a
         logger.info(f"Extracted {len(structured_items)} items: {structured_items}")
         
         custom_items_query = "SELECT c.uid, c.standard_name FROM c WHERE c.shop_id = @shop AND STARTSWITH(c.uid, 'custom_') AND c.status = 'active' AND c.type = 'inventory'"
-        custom_items = list(container.query_items(query=custom_items_query, parameters=[{"name": "@shop", "value": shop_id}], enable_cross_partition_query=True))
+        custom_items = await run_blocking(
+            lambda: list(
+                container.query_items(
+                    query=custom_items_query,
+                    parameters=[{"name": "@shop", "value": shop_id}],
+                    enable_cross_partition_query=True,
+                )
+            )
+        )
+
+        inventory_query = (
+            "SELECT c.id, c.shop_id, c.uid, c.standard_name, c.quantity, c.unit, c.status, c.type, c.last_updated "
+            "FROM c WHERE c.shop_id = @shop AND c.status = 'active' AND c.type = 'inventory'"
+        )
+        inventory_docs = await run_blocking(
+            lambda: list(
+                container.query_items(
+                    query=inventory_query,
+                    parameters=[{"name": "@shop", "value": shop_id}],
+                    enable_cross_partition_query=True,
+                )
+            )
+        )
+        inventory_by_uid = {doc["uid"]: doc for doc in inventory_docs if doc.get("uid")}
+        pending_inventory_upserts = {}
+        pending_quarantine_writes = []
         
         results = {"clean_inventory": [], "quarantined": []}
         # Track UIDs already processed in this scan batch
@@ -562,7 +611,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
         # ── BATCH MATCHING: Single GPT call for all items ────────────────────
         # Tier 1 (training signals) runs first, then Tier 2 (GPT) for misses
         # Cost: 50 items → 1 GPT call instead of 50 → ~70% cost reduction
-        sort_results = batch_sort_items(structured_items, shop_id)
+        sort_results = await run_blocking(batch_sort_items, structured_items, shop_id)
         # ────────────────────────────────────────────────────────────────────
 
         for item in structured_items:
@@ -608,7 +657,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
                             "quarantine_reason": "Duplicate in same ledger — verify manually",
                             "timestamp": datetime.now(timezone.utc).isoformat()
                         }
-                        container.create_item(body=quarantine_item)
+                        pending_quarantine_writes.append(quarantine_item)
                         results["quarantined"].append(quarantine_item)
                         continue
                     else:
@@ -626,7 +675,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
                             "quarantine_reason": f"Unit mismatch in same ledger: '{prev_unit}' vs '{unit}'",
                             "timestamp": datetime.now(timezone.utc).isoformat()
                         }
-                        container.create_item(body=quarantine_item)
+                        pending_quarantine_writes.append(quarantine_item)
                         results["quarantined"].append(quarantine_item)
                         continue
                 else:
@@ -634,14 +683,13 @@ If the same item appears multiple times with the same unit, sum the quantities a
 
             # --- 5. ATOMIC PATCHES (No more Race Conditions) ---
             if uid_to_update:
-                query = "SELECT c.id, c.unit FROM c WHERE c.shop_id = @shop AND c.uid = @uid AND c.status = 'active' AND c.type = 'inventory'"
-                existing_items = list(container.query_items(query=query, parameters=[{"name": "@shop", "value": shop_id}, {"name": "@uid", "value": uid_to_update}], enable_cross_partition_query=True))
+                existing_item = inventory_by_uid.get(uid_to_update)
 
-                if existing_items:
+                if existing_item:
                     # --- UNIT MISMATCH GUARD ---
                     # If item exists but unit is different (e.g. "ml" vs "units"),
                     # don't blindly add up — send to quarantine for human review
-                    stored_unit = existing_items[0].get("unit", "").lower().strip()
+                    stored_unit = existing_item.get("unit", "").lower().strip()
                     incoming_unit = unit.lower().strip()
                     unit_mismatch = stored_unit and incoming_unit and stored_unit != incoming_unit
 
@@ -659,23 +707,18 @@ If the same item appears multiple times with the same unit, sum the quantities a
                             "quarantine_reason": f"Unit mismatch: stored as '{stored_unit}', scanned as '{incoming_unit}'",
                             "timestamp": datetime.now(timezone.utc).isoformat()
                         }
-                        container.create_item(body=quarantine_item)
+                        pending_quarantine_writes.append(quarantine_item)
                         results["quarantined"].append(quarantine_item)
                         continue
 
-                    doc_id = existing_items[0]['id']
-                    container.patch_item(
-                        item=doc_id,
-                        partition_key=shop_id,
-                        patch_operations=[
-                            {'op': 'incr', 'path': '/quantity', 'value': qty_math},
-                            {'op': 'replace', 'path': '/last_updated', 'value': datetime.now(timezone.utc).isoformat()}
-                        ]
-                    )
+                    existing_item["quantity"] = safe_float(existing_item.get("quantity", 0), 0) + qty_math
+                    existing_item["last_updated"] = datetime.now(timezone.utc).isoformat()
+                    pending_inventory_upserts[uid_to_update] = existing_item
                     results["clean_inventory"].append({"uid": uid_to_update, "updated": True})
                 else:
                     new_item = {"id": str(uuid.uuid4()), "shop_id": shop_id, "uid": uid_to_update, "standard_name": standard_name_to_use, "quantity": qty_math, "unit": unit, "status": "active", "type": "inventory", "last_updated": datetime.now(timezone.utc).isoformat()}
-                    container.create_item(body=new_item)
+                    inventory_by_uid[uid_to_update] = new_item
+                    pending_inventory_upserts[uid_to_update] = new_item
                     results["clean_inventory"].append(new_item)
             else:
                 quarantine_item = {
@@ -691,12 +734,19 @@ If the same item appears multiple times with the same unit, sum the quantities a
                     "quarantine_reason": "Low confidence match",
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
-                container.create_item(body=quarantine_item)
+                pending_quarantine_writes.append(quarantine_item)
                 results["quarantined"].append(quarantine_item)
+
+        for quarantine_item in pending_quarantine_writes:
+            await run_blocking(container.create_item, body=quarantine_item)
+
+        for inventory_doc in pending_inventory_upserts.values():
+            await run_blocking(container.upsert_item, body=inventory_doc)
 
         # --- 6. RECORD IDEMPOTENCY & USAGE ---
         if scan_id and scan_marker_created:
-            container.patch_item(
+            await run_blocking(
+                container.patch_item,
                 item=scan_id,
                 partition_key=shop_id,
                 patch_operations=[
@@ -711,20 +761,24 @@ If the same item appears multiple times with the same unit, sum the quantities a
         quarantine_count = len(results["quarantined"])
 
         try:
-            container.create_item(body={
-                "id": usage_doc_id,
-                "shop_id": shop_id,
-                "month": current_month,
-                "scans_this_month": 1,
-                "items_processed_this_month": items_processed_count,
-                "tier1_hits_this_month": tier1_hits_count,
-                "quarantine_this_month": quarantine_count,
-                "status": "active",
-                "type": "usage",
-                "last_updated": datetime.now(timezone.utc).isoformat(),
-            })
+            await run_blocking(
+                container.create_item,
+                body={
+                    "id": usage_doc_id,
+                    "shop_id": shop_id,
+                    "month": current_month,
+                    "scans_this_month": 1,
+                    "items_processed_this_month": items_processed_count,
+                    "tier1_hits_this_month": tier1_hits_count,
+                    "quarantine_this_month": quarantine_count,
+                    "status": "active",
+                    "type": "usage",
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                },
+            )
         except cosmos_exceptions.CosmosResourceExistsError:
-            container.patch_item(
+            await run_blocking(
+                container.patch_item,
                 item=usage_doc_id,
                 partition_key=shop_id,
                 patch_operations=[
@@ -741,14 +795,14 @@ If the same item appears multiple times with the same unit, sum the quantities a
     except HTTPException:
         if scan_id and scan_marker_created:
             try:
-                container.delete_item(item=scan_id, partition_key=shop_id)
+                await run_blocking(container.delete_item, item=scan_id, partition_key=shop_id)
             except Exception as cleanup_err:
                 logger.warning(f"Failed to clear idempotency marker after HTTPException: {cleanup_err}")
         raise
     except Exception as e:
         if scan_id and scan_marker_created:
             try:
-                container.delete_item(item=scan_id, partition_key=shop_id)
+                await run_blocking(container.delete_item, item=scan_id, partition_key=shop_id)
             except Exception as cleanup_err:
                 logger.warning(f"Failed to clear idempotency marker after failure: {cleanup_err}")
         logger.error(f"Pipeline error: {e}", exc_info=True)
