@@ -170,6 +170,9 @@ export default function SettingsScreen() {
         </TouchableOpacity>
 
         <Text style={styles.versionText}>{t('settings_version')}</Text>
+        <Text style={{ fontSize: 11, color: '#9A9A9A', textAlign: 'center', paddingVertical: 16 }}>
+          Illustrations by Storyset (storyset.com)
+        </Text>
         <View style={{ height: 40 }} />
       </ScrollView>
     </View>
@@ -177,7 +180,7 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F3F0' },
   headerBackground: { backgroundColor: '#0F172A', borderBottomLeftRadius: 32, borderBottomRightRadius: 32, paddingBottom: 30, paddingHorizontal: 24 },
   headerTitle: { color: '#FFFFFF', fontSize: 28, fontWeight: '800', marginBottom: 4 },
   headerSub: { color: '#94A3B8', fontSize: 14, fontWeight: '500' },

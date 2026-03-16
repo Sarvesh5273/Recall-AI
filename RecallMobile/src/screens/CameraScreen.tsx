@@ -102,13 +102,8 @@ export default function CameraScreen({ route, navigation }: any) {
 
       <SafeAreaView style={styles.overlay}>
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
-            <Feather name="x" size={20} color="#FFFFFF" />
-            <Text style={styles.iconText}>Cancel</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={styles.iconButton} onPress={() => setIsTorchOn(!isTorchOn)}>
             <Feather name={isTorchOn ? "zap-off" : "zap"} size={20} color={isTorchOn ? "#FBBF24" : "#FFFFFF"} />
-            <Text style={[styles.iconText, isTorchOn && { color: '#FBBF24' }]}>Flash</Text>
           </TouchableOpacity>
         </View>
 
@@ -137,7 +132,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F172A' },
   text: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between' },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 24, paddingTop: 20 },
+  topBar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 24, paddingTop: 20 },
   iconButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(15, 23, 42, 0.75)', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   iconText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700', marginLeft: 8 },
   reticleContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', margin: 40 },
@@ -146,6 +141,6 @@ const styles = StyleSheet.create({
   reticleBottomLeft: { position: 'absolute', bottom: 0, left: 0, width: 40, height: 40, borderColor: '#3B82F6', borderBottomWidth: 4, borderLeftWidth: 4, borderBottomLeftRadius: 12 },
   reticleBottomRight: { position: 'absolute', bottom: 0, right: 0, width: 40, height: 40, borderColor: '#3B82F6', borderBottomWidth: 4, borderRightWidth: 4, borderBottomRightRadius: 12 },
   bottomBar: { paddingBottom: 40, paddingHorizontal: 24, alignItems: 'center' },
-  captureButton: { flexDirection: 'row', width: '100%', height: 72, borderRadius: 24, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 8 },
+  captureButton: { flexDirection: 'row', width: '100%', height: 72, borderRadius: 24, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 8, marginBottom: 32 },
   buttonTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '900', letterSpacing: 0.5 }
 });

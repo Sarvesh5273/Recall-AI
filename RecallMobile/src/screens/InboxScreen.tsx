@@ -98,7 +98,7 @@ function InboxScreen({ quarantinedItems, navigation, route }: any) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' }, 
+  container: { flex: 1, backgroundColor: '#F4F3F0' }, 
   headerBackground: { backgroundColor: '#0F172A', borderBottomLeftRadius: 32, borderBottomRightRadius: 32, paddingBottom: 30 },
   headerContent: { paddingHorizontal: 24 },
   headerTitle: { color: '#FFFFFF', fontSize: 28, fontWeight: '800', marginBottom: 4 },

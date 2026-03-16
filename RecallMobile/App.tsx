@@ -14,6 +14,7 @@ import ErrorBoundary from './src/components/ErrorBoundary';
 // Auth
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
+import LoginScreen from './src/screens/auth/LoginScreen';
 import SendOTPScreen from './src/screens/auth/SendOTPScreen';
 import VerifyOTPScreen from './src/screens/auth/VerifyOTPScreen';
 import SetPINScreen from './src/screens/auth/SetPINScreen';
@@ -134,10 +135,10 @@ function AppNavigator() {
   );
 }
 
-// FIX: SendOTP is first — new users land on Register, not PIN
 function AuthNavigator() {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="SendOTP" component={SendOTPScreen} />
       <Stack.Screen name="VerifyOTP" component={VerifyOTPScreen} />
       <Stack.Screen name="SetPIN" component={SetPINScreen} />

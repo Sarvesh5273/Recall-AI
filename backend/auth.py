@@ -122,23 +122,23 @@ def get_current_shop(credentials: HTTPAuthorizationCredentials = Depends(securit
 def send_otp(payload: SendOTPPayload):
     """
     Step 1: Send OTP to phone number.
-    In production: integrate MSG91 or Twilio.
-    In development: OTP is always 123456 (printed to console).
+    In development: OTP is always 123456.
+    In production: OTP is random and sent via Twilio.
     """
     phone = normalize_phone(payload.phone)
 
     if len(phone) < 10:
         raise HTTPException(status_code=400, detail="Invalid phone number")
 
-    # Generate 6 digit OTP
-    otp = str(random.randint(100000, 999999))
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRE_MINUTES)).timestamp()
-
-    _otp_store[phone] = {"otp": otp, "expires_at": expires_at}
-
     env = os.getenv("ENV", "development")
 
-    if env == "production":
+    if env == "development":
+        otp = "123456"
+        _otp_store[phone] = {"otp": otp, "expires_at": expires_at}
+        logger.info("DEV mode — use OTP 123456 to login")
+    elif env == "production":
+        otp = str(random.randint(100000, 999999))
         # ── TWILIO SMS ────────────────────────────────────────────────────────
         # Trial account: can only SMS to verified numbers (your own phone)
         # Upgrade to paid account to SMS any number
@@ -155,14 +155,16 @@ def send_otp(payload: SendOTPPayload):
                 from_=from_number,
                 to=phone
             )
-            logger.info("OTP sent via Twilio to %s", mask_phone(phone))
+            _otp_store[phone] = {"otp": otp, "expires_at": expires_at}
+            logger.info("OTP sent to %s", mask_phone(phone))
         except Exception as e:
             logger.error("Twilio SMS failed for %s: %s", mask_phone(phone), e, exc_info=True)
             raise HTTPException(status_code=500, detail="Failed to send OTP. Try again.")
         # ─────────────────────────────────────────────────────────────────────
     else:
-        # Dev mode — no SMS sent
-        logger.info("OTP sent in development mode to %s", mask_phone(phone))
+        otp = "123456"
+        _otp_store[phone] = {"otp": otp, "expires_at": expires_at}
+        logger.info("DEV mode — use OTP 123456 to login")
 
     return {
         "status": "success",

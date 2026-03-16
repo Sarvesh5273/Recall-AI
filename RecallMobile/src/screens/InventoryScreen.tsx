@@ -160,7 +160,7 @@ export default function InventoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F3F0' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   headerBackground: { backgroundColor: '#0F172A', borderBottomLeftRadius: 32, borderBottomRightRadius: 32, paddingBottom: 30, marginBottom: 16 },
   headerContent: { paddingHorizontal: 24 },

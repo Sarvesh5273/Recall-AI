@@ -1,152 +1,271 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  Vibration, TextInput, TouchableWithoutFeedback
+  Animated,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Feather from 'react-native-vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../context/AuthContext';
+import { AUTH_COLORS, AUTH_SHADOW, AUTH_SIZE } from './authDesign';
 
+const PIN_LENGTH = 4;
 const MAX_ATTEMPTS = 5;
+const LOCKOUT_SECONDS = 30;
 
 export default function PINLockScreen() {
-  const insets = useSafeAreaInsets();
-  const { shopName, logout, setPinVerified } = useAuth();
-  const pinInputRef = useRef<TextInput>(null);
+  const { logout, setPinVerified, shopName } = useAuth();
+  const inputRefs = useRef<(TextInput | null)[]>([]);
+  const shakeAnim = useRef(new Animated.Value(0)).current;
 
-  const [pin, setPin] = useState('');
+  const [pinDigits, setPinDigits] = useState(Array.from({ length: PIN_LENGTH }, () => ''));
+  const [focusedIndex, setFocusedIndex] = useState(0);
   const [attempts, setAttempts] = useState(0);
+  const [lockoutRemaining, setLockoutRemaining] = useState(0);
   const [error, setError] = useState('');
   const [isChecking, setIsChecking] = useState(false);
 
-  const checkPIN = async (entered: string) => {
-    if (isChecking) return;
+  useEffect(() => {
+    if (lockoutRemaining <= 0) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setLockoutRemaining(current => current - 1);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [lockoutRemaining]);
+
+  useEffect(() => {
+    if (lockoutRemaining === 0 && attempts >= MAX_ATTEMPTS) {
+      setAttempts(0);
+      setError('');
+      setPinDigits(Array.from({ length: PIN_LENGTH }, () => ''));
+    }
+  }, [lockoutRemaining, attempts]);
+
+  const focusInput = (index: number) => {
+    setFocusedIndex(index);
+    inputRefs.current[index]?.focus();
+  };
+
+  const clearPin = () => {
+    setPinDigits(Array.from({ length: PIN_LENGTH }, () => ''));
+    setTimeout(() => focusInput(0), 80);
+  };
+
+  const playShake = () => {
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 8, duration: 45, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -8, duration: 45, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 6, duration: 45, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -6, duration: 45, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 45, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const checkPin = async (enteredPin: string) => {
+    if (isChecking || lockoutRemaining > 0) {
+      return;
+    }
     setIsChecking(true);
-
     try {
-      const stored = await AsyncStorage.getItem('recall_pin');
-
-      if (entered === stored) {
-        // Correct — let RootNavigator show the app
+      const storedPin = await AsyncStorage.getItem('recall_pin');
+      if (enteredPin === storedPin) {
         setPinVerified();
-      } else {
-        const newAttempts = attempts + 1;
-        setAttempts(newAttempts);
-        Vibration.vibrate([0, 80, 80, 80]);
-
-        if (newAttempts >= MAX_ATTEMPTS) {
-          // Force logout after 5 wrong attempts
-          await logout();
-          return;
-        }
-
-        setError(`Incorrect PIN. ${MAX_ATTEMPTS - newAttempts} attempt${MAX_ATTEMPTS - newAttempts === 1 ? '' : 's'} remaining.`);
-        setPin('');
+        return;
       }
+
+      const nextAttempts = attempts + 1;
+      setAttempts(nextAttempts);
+      playShake();
+
+      if (nextAttempts >= MAX_ATTEMPTS) {
+        setLockoutRemaining(LOCKOUT_SECONDS);
+        setError(`Too many attempts — please wait ${LOCKOUT_SECONDS}s`);
+      } else {
+        setError('Incorrect PIN');
+      }
+      clearPin();
     } finally {
       setIsChecking(false);
     }
   };
 
-  const handlePinChange = (val: string) => {
-    const digits = val.replace(/\D/g, '').slice(0, 6);
+  const handleDigitChange = (rawValue: string, index: number) => {
+    if (lockoutRemaining > 0 || isChecking) {
+      return;
+    }
+    const digit = rawValue.replace(/\D/g, '').slice(-1);
+    const nextDigits = [...pinDigits];
+    nextDigits[index] = digit;
+    setPinDigits(nextDigits);
     setError('');
-    setPin(digits);
-    if (digits.length === 6) checkPIN(digits);
+
+    if (digit && index < PIN_LENGTH - 1) {
+      focusInput(index + 1);
+    }
+
+    if (nextDigits.every(Boolean)) {
+      setTimeout(() => checkPin(nextDigits.join('')), 80);
+    }
   };
 
-  const handleLogout = async () => {
+  const handleKeyPress = (e: any, index: number) => {
+    if (e.nativeEvent.key !== 'Backspace' || lockoutRemaining > 0 || isChecking) {
+      return;
+    }
+    const nextDigits = [...pinDigits];
+    if (nextDigits[index]) {
+      nextDigits[index] = '';
+      setPinDigits(nextDigits);
+      return;
+    }
+    if (index > 0) {
+      nextDigits[index - 1] = '';
+      setPinDigits(nextDigits);
+      focusInput(index - 1);
+    }
+  };
+
+  const handleForgotPin = async () => {
     await logout();
   };
 
+  const subtitle = shopName?.trim() ? shopName : 'Enter your PIN to continue';
+  const lockoutText =
+    lockoutRemaining > 0 ? `Too many attempts — please wait ${lockoutRemaining}s` : error;
+
   return (
-    <View style={[styles.container, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 24 }]}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <StatusBar barStyle="dark-content" backgroundColor={AUTH_COLORS.background} />
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text style={styles.appName}>Recall AI</Text>
 
-      {/* Header */}
-      <View style={styles.top}>
-        <View style={styles.logoRow}>
-          <Text style={styles.logoSub}>RECALL AI</Text>
-        </View>
-        <Text style={styles.shopName}>{shopName ?? 'Your Shop'}</Text>
-        <Text style={styles.subtitle}>Enter PIN to unlock</Text>
-      </View>
+        <View style={styles.card}>
+          <Text style={styles.heading}>Welcome back</Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
 
-      {/* PIN Dots — tap to re-open keyboard */}
-      <TouchableWithoutFeedback onPress={() => pinInputRef.current?.focus()}>
-        <View style={styles.middle}>
-          <View style={styles.iconWrap}>
-            <Feather name="lock" size={32} color="#3B82F6" />
-          </View>
-
-          <View style={styles.dotsRow}>
-            {[0,1,2,3,4,5].map(i => (
-              <View key={i} style={[
-                styles.dot,
-                pin.length > i && styles.dotFilled,
-                !!error && styles.dotError,
-                pin.length === i && !error && styles.dotActive,
-              ]} />
+          <Animated.View style={[styles.pinRow, { transform: [{ translateX: shakeAnim }] }]}>
+            {pinDigits.map((digit, index) => (
+              <TextInput
+                key={`pin-lock-${index}`}
+                ref={ref => {
+                  inputRefs.current[index] = ref;
+                }}
+                style={[
+                  styles.pinBox,
+                  focusedIndex === index && styles.pinBoxActive,
+                ]}
+                value={digit}
+                onChangeText={value => handleDigitChange(value, index)}
+                onKeyPress={event => handleKeyPress(event, index)}
+                onFocus={() => setFocusedIndex(index)}
+                keyboardType="number-pad"
+                secureTextEntry
+                maxLength={1}
+                autoFocus={index === 0}
+                editable={lockoutRemaining <= 0 && !isChecking}
+                textAlign="center"
+              />
             ))}
-          </View>
+          </Animated.View>
 
-          {error
-            ? <View style={styles.errorRow}>
-                <Feather name="alert-circle" size={14} color="#EF4444" />
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            : <Text style={styles.hint}>Tap to enter PIN</Text>
-          }
+          {lockoutText ? <Text style={styles.errorText}>{lockoutText}</Text> : null}
         </View>
-      </TouchableWithoutFeedback>
 
-      {/* Hidden TextInput — triggers native numpad */}
-      <TextInput
-        ref={pinInputRef}
-        style={styles.hiddenInput}
-        value={pin}
-        onChangeText={handlePinChange}
-        keyboardType="number-pad"
-        maxLength={6}
-        autoFocus
-        caretHidden
-        secureTextEntry
-        editable={!isChecking}
-      />
-
-      {/* Logout link */}
-      <TouchableOpacity onPress={handleLogout} style={styles.logoutRow}>
-        <Feather name="log-out" size={14} color="#94A3B8" />
-        <Text style={styles.logoutText}>Login with different account</Text>
-      </TouchableOpacity>
-    </View>
+        <TouchableOpacity
+          style={styles.forgotLink}
+          onPress={handleForgotPin}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.forgotLinkText}>Forgot PIN?</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1, backgroundColor: '#0F172A',
-    justifyContent: 'space-between', paddingHorizontal: 24,
+    flex: 1,
+    backgroundColor: AUTH_COLORS.background,
   },
-  top: { alignItems: 'center', paddingTop: 20 },
-  logoRow: { marginBottom: 20 },
-  logoSub: { color: '#3B82F6', fontSize: 13, fontWeight: '800', letterSpacing: 2, textTransform: 'uppercase' },
-  shopName: { color: '#FFFFFF', fontSize: 24, fontWeight: '800', marginBottom: 6 },
-  subtitle: { color: '#64748B', fontSize: 15, fontWeight: '500' },
-  middle: { alignItems: 'center' },
-  iconWrap: {
-    width: 72, height: 72, borderRadius: 20, backgroundColor: '#1E293B',
-    justifyContent: 'center', alignItems: 'center', marginBottom: 32,
+  content: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: 56,
+    paddingBottom: 24,
   },
-  dotsRow: { flexDirection: 'row', gap: 16, justifyContent: 'center', marginBottom: 16 },
-  dot: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#334155', backgroundColor: 'transparent' },
-  dotActive: { borderColor: '#3B82F6' },
-  dotFilled: { backgroundColor: '#3B82F6', borderColor: '#3B82F6' },
-  dotError: { borderColor: '#EF4444', backgroundColor: '#450A0A' },
-  errorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  errorText: { color: '#EF4444', fontSize: 13, fontWeight: '600' },
-  hint: { color: '#475569', fontSize: 13, fontWeight: '500' },
-  hiddenInput: { position: 'absolute', width: 0, height: 0, opacity: 0 },
-  logoutRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  logoutText: { color: '#475569', fontSize: 13, fontWeight: '600' },
+  appName: {
+    alignSelf: 'center',
+    color: AUTH_COLORS.appName,
+    fontSize: AUTH_SIZE.appNameSize,
+    fontWeight: '700',
+    marginBottom: 28,
+  },
+  card: {
+    backgroundColor: AUTH_COLORS.card,
+    borderRadius: AUTH_SIZE.cardRadius,
+    padding: AUTH_SIZE.cardPadding,
+    ...AUTH_SHADOW,
+  },
+  heading: {
+    color: AUTH_COLORS.heading,
+    fontSize: AUTH_SIZE.headingSize,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  subtitle: {
+    color: AUTH_COLORS.subtitle,
+    fontSize: AUTH_SIZE.subtitleSize,
+    fontWeight: '400',
+    marginBottom: 20,
+  },
+  pinRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  pinBox: {
+    width: 56,
+    height: 64,
+    minHeight: AUTH_SIZE.minTouchTarget,
+    marginHorizontal: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: AUTH_COLORS.inputBorder,
+    backgroundColor: AUTH_COLORS.inputBackground,
+    color: AUTH_COLORS.inputText,
+    fontSize: 28,
+    fontWeight: '800',
+    padding: 0,
+  },
+  pinBoxActive: {
+    borderColor: AUTH_COLORS.primary,
+    borderWidth: 2,
+  },
+  errorText: {
+    color: AUTH_COLORS.error,
+    fontSize: 14,
+    marginTop: 12,
+  },
+  forgotLink: {
+    minHeight: AUTH_SIZE.minTouchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 14,
+  },
+  forgotLinkText: {
+    color: AUTH_COLORS.link,
+    fontSize: 13,
+    fontWeight: '600',
+  },
 });

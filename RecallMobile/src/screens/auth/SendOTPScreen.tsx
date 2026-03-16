@@ -1,17 +1,24 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StatusBar,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
 import { API_BASE_URL } from '@env';
-
-type Mode = 'login' | 'register';
+import { AUTH_COLORS, AUTH_SHADOW, AUTH_SIZE } from './authDesign';
 
 export default function SendOTPScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
-  const [mode, setMode] = useState<Mode>('login');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -29,9 +36,7 @@ export default function SendOTPScreen({ navigation }: any) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail || 'Failed to send OTP');
-      // Pass mode so VerifyOTPScreen knows what the user intended
-      // Backend still auto-detects: login-otp returns 404 if not registered
-      navigation.replace('VerifyOTP', { phone, mode });
+      navigation.replace('VerifyOTP', { phone, mode: 'register' });
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -39,108 +44,55 @@ export default function SendOTPScreen({ navigation }: any) {
     }
   };
 
-  const switchMode = (newMode: Mode) => {
-    setMode(newMode);
-    setPhone('');
-    setError('');
-  };
-
-  const config = {
-    login: {
-      title: 'Welcome Back',
-      sub: 'Enter your registered number to receive an OTP',
-      btnText: 'Send OTP to Login',
-      icon: 'log-in',
-    },
-    register: {
-      title: 'Create Account',
-      sub: 'Enter your number to register your shop',
-      btnText: 'Send OTP to Register',
-      icon: 'user-plus',
-    },
-  };
-
-  const { title, sub, btnText, icon } = config[mode];
-
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      {/* HEADER */}
-      <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
-        <Text style={styles.headerSub}>RECALL AI</Text>
-        <Text style={styles.headerTitle}>{title}</Text>
-
-        {/* LOGIN / REGISTER TABS */}
-        <View style={styles.tabs}>
-          <TouchableOpacity
-            style={[styles.tab, mode === 'login' && styles.tabActive]}
-            onPress={() => switchMode('login')}
-            activeOpacity={0.8}
-          >
-            <Feather
-              name="log-in"
-              size={14}
-              color={mode === 'login' ? '#FFFFFF' : '#64748B'}
-            />
-            <Text style={[styles.tabText, mode === 'login' && styles.tabTextActive]}>
-              Login
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tab, mode === 'register' && styles.tabActive]}
-            onPress={() => switchMode('register')}
-            activeOpacity={0.8}
-          >
-            <Feather
-              name="user-plus"
-              size={14}
-              color={mode === 'register' ? '#FFFFFF' : '#64748B'}
-            />
-            <Text style={[styles.tabText, mode === 'register' && styles.tabTextActive]}>
-              Register
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
+      <StatusBar barStyle="dark-content" backgroundColor={AUTH_COLORS.background} />
       <ScrollView
-        style={styles.body}
-        contentContainerStyle={styles.bodyContent}
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: insets.top + 18, paddingBottom: insets.bottom + 24 },
+        ]}
         keyboardShouldPersistTaps="handled"
       >
-        {/* STEP INDICATOR — only show for register */}
-        {mode === 'register' && (
-          <>
-            <View style={styles.stepRow}>
-              <View style={[styles.stepDot, styles.stepDotActive]} />
-              <View style={styles.stepLine} />
-              <View style={styles.stepDot} />
-              <View style={styles.stepLine} />
-              <View style={styles.stepDot} />
-            </View>
-            <Text style={styles.stepLabel}>Step 1 of 3 — Verify your number</Text>
-          </>
-        )}
+        <View style={styles.topBar}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+                return;
+              }
+              navigation.replace('Login');
+            }}
+            activeOpacity={0.85}
+          >
+            <Feather name="arrow-left" size={20} color={AUTH_COLORS.primary} />
+          </TouchableOpacity>
+          <Text style={styles.appName}>Recall AI</Text>
+          <View style={styles.topBarSpacer} />
+        </View>
 
-        {/* CARD */}
+        <Image
+          source={require('../../assets/kirana_illustration.gif')}
+          style={{ width: 240, height: 240 }}
+          resizeMode="contain"
+        />
+
         <View style={styles.card}>
-          <View style={styles.iconWrap}>
-            <Feather name={icon as any} size={28} color="#3B82F6" />
-          </View>
-          <Text style={styles.cardTitle}>Mobile Number</Text>
-          <Text style={styles.cardSub}>{sub}</Text>
+          <Text style={styles.heading}>Register Your Shop</Text>
+          <Text style={styles.subtitle}>Enter your mobile number</Text>
 
-          <View style={styles.inputRow}>
-            <View style={styles.prefixBox}>
-              <Text style={styles.prefixText}>🇮🇳  +91</Text>
+          <View style={styles.phoneRow}>
+            <View style={styles.phonePrefix}>
+              <Text style={styles.phonePrefixText}>🇮🇳 +91</Text>
             </View>
             <TextInput
-              style={styles.input}
+              style={styles.phoneInput}
               placeholder="Enter 10 digit number"
-              placeholderTextColor="#CBD5E1"
+              placeholderTextColor={AUTH_COLORS.inputPlaceholder}
               keyboardType="phone-pad"
               maxLength={10}
               value={phone}
@@ -152,123 +104,165 @@ export default function SendOTPScreen({ navigation }: any) {
             />
           </View>
 
-          {error ? (
-            <View style={styles.errorRow}>
-              <Feather name="alert-circle" size={14} color="#EF4444" />
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          ) : null}
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          <TouchableOpacity
+            style={[styles.primaryButton, (!isValid || loading) && styles.primaryButtonDisabled]}
+            onPress={handleSendOTP}
+            disabled={!isValid || loading}
+            activeOpacity={0.9}
+          >
+            {loading ? (
+              <ActivityIndicator color={AUTH_COLORS.primaryTextOnPrimary} />
+            ) : (
+              <Text style={styles.primaryButtonText}>Send OTP</Text>
+            )}
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity
-          style={[styles.btn, !isValid && styles.btnDisabled]}
-          onPress={handleSendOTP}
-          disabled={!isValid || loading}
+          style={styles.bottomLink}
+          onPress={() => navigation.replace('Login')}
           activeOpacity={0.85}
         >
-          {loading
-            ? <ActivityIndicator color="#fff" />
-            : <>
-                <Text style={styles.btnText}>{btnText}</Text>
-                <Feather name="arrow-right" size={18} color="#fff" />
-              </>
-          }
+          <Text style={styles.bottomLinkText}>Already registered? Login</Text>
         </TouchableOpacity>
-
-        {/* Cross-mode hint */}
-        <TouchableOpacity
-          style={styles.switchRow}
-          onPress={() => switchMode(mode === 'login' ? 'register' : 'login')}
-        >
-          <Text style={styles.switchText}>
-            {mode === 'login' ? "Don't have an account? " : 'Already registered? '}
-          </Text>
-          <Text style={styles.switchBold}>
-            {mode === 'login' ? 'Register here' : 'Login here'}
-          </Text>
-        </TouchableOpacity>
-
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: {
-    backgroundColor: '#0F172A',
-    borderBottomLeftRadius: 32,
-    borderBottomRightRadius: 32,
-    paddingBottom: 28,
+  container: {
+    flex: 1,
+    backgroundColor: AUTH_COLORS.background,
+  },
+  content: {
+    flexGrow: 1,
     paddingHorizontal: 24,
   },
-  headerSub: { color: '#64748B', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 },
-  headerTitle: { color: '#FFFFFF', fontSize: 26, fontWeight: '800', marginBottom: 20 },
-
-  // Tabs
-  tabs: {
+  topBar: {
     flexDirection: 'row',
-    backgroundColor: '#1E293B',
-    borderRadius: 14,
-    padding: 4,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 26,
   },
-  tab: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 10, borderRadius: 10,
+  backButton: {
+    width: AUTH_SIZE.minTouchTarget,
+    height: AUTH_SIZE.minTouchTarget,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: AUTH_COLORS.card,
+    borderWidth: 1,
+    borderColor: AUTH_COLORS.inputBorder,
   },
-  tabActive: { backgroundColor: '#3B82F6' },
-  tabText: { color: '#64748B', fontSize: 14, fontWeight: '700' },
-  tabTextActive: { color: '#FFFFFF' },
-
-  body: { flex: 1 },
-  bodyContent: { paddingHorizontal: 16, paddingTop: 24, paddingBottom: 40 },
-
-  stepRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  stepDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#E2E8F0' },
-  stepDotActive: { backgroundColor: '#3B82F6', width: 28, borderRadius: 6 },
-  stepLine: { flex: 1, height: 2, backgroundColor: '#E2E8F0', marginHorizontal: 6 },
-  stepLabel: { color: '#64748B', fontSize: 13, fontWeight: '600', marginBottom: 20 },
-
+  appName: {
+    color: AUTH_COLORS.appName,
+    fontSize: AUTH_SIZE.appNameSize,
+    fontWeight: '700',
+  },
+  topBarSpacer: {
+    width: AUTH_SIZE.minTouchTarget,
+    height: AUTH_SIZE.minTouchTarget,
+  },
+  illustration: {
+    width: '100%',
+    height: 160,
+    marginBottom: 28,
+  },
+  illustrationPlaceholder: {
+    width: '100%',
+    height: 160,
+    borderRadius: 16,
+    backgroundColor: AUTH_COLORS.illustrationPlaceholder,
+    marginBottom: 28,
+  },
   card: {
-    backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, marginBottom: 16,
-    shadowColor: '#64748B', shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08, shadowRadius: 16, elevation: 4,
+    backgroundColor: AUTH_COLORS.card,
+    borderRadius: AUTH_SIZE.cardRadius,
+    padding: AUTH_SIZE.cardPadding,
+    ...AUTH_SHADOW,
   },
-  iconWrap: {
-    width: 56, height: 56, borderRadius: 16, backgroundColor: '#EFF6FF',
-    justifyContent: 'center', alignItems: 'center', marginBottom: 16,
+  heading: {
+    color: AUTH_COLORS.heading,
+    fontSize: AUTH_SIZE.headingSize,
+    fontWeight: '800',
+    marginBottom: 8,
   },
-  cardTitle: { fontSize: 20, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
-  cardSub: { fontSize: 14, color: '#64748B', fontWeight: '500', marginBottom: 24, lineHeight: 20 },
-
-  inputRow: {
-    flexDirection: 'row', borderWidth: 1.5, borderColor: '#E2E8F0',
-    borderRadius: 14, overflow: 'hidden', backgroundColor: '#F8FAFC',
+  subtitle: {
+    color: AUTH_COLORS.subtitle,
+    fontSize: AUTH_SIZE.subtitleSize,
+    fontWeight: '400',
+    marginBottom: 24,
   },
-  prefixBox: {
-    paddingHorizontal: 16, paddingVertical: 16,
-    borderRightWidth: 1, borderRightColor: '#E2E8F0',
-    justifyContent: 'center', backgroundColor: '#F1F5F9',
+  phoneRow: {
+    height: AUTH_SIZE.inputHeight,
+    minHeight: AUTH_SIZE.minTouchTarget,
+    backgroundColor: AUTH_COLORS.inputBackground,
+    borderWidth: 1,
+    borderColor: AUTH_COLORS.inputBorder,
+    borderRadius: AUTH_SIZE.inputRadius,
+    flexDirection: 'row',
+    alignItems: 'center',
+    overflow: 'hidden',
   },
-  prefixText: { color: '#475569', fontSize: 15, fontWeight: '700' },
-  input: {
-    flex: 1, paddingHorizontal: 16, paddingVertical: 16,
-    color: '#0F172A', fontSize: 20, fontWeight: '700', letterSpacing: 1.5,
+  phonePrefix: {
+    height: '100%',
+    minWidth: 92,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRightWidth: 1,
+    borderRightColor: AUTH_COLORS.inputBorder,
+    paddingHorizontal: 10,
   },
-
-  errorRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 },
-  errorText: { color: '#EF4444', fontSize: 13, fontWeight: '600' },
-
-  btn: {
-    backgroundColor: '#3B82F6', borderRadius: 16, paddingVertical: 18,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    shadowColor: '#3B82F6', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
+  phonePrefixText: {
+    color: AUTH_COLORS.inputText,
+    fontSize: 14,
+    fontWeight: '600',
   },
-  btnDisabled: { backgroundColor: '#CBD5E1', shadowOpacity: 0 },
-  btnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
-
-  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
-  switchText: { color: '#64748B', fontSize: 14 },
-  switchBold: { color: '#3B82F6', fontSize: 14, fontWeight: '700' },
+  phoneInput: {
+    flex: 1,
+    height: '100%',
+    paddingHorizontal: 14,
+    color: AUTH_COLORS.inputText,
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  errorText: {
+    color: AUTH_COLORS.error,
+    fontSize: 13,
+    marginTop: 10,
+    marginBottom: 2,
+  },
+  primaryButton: {
+    width: '100%',
+    height: AUTH_SIZE.buttonHeight,
+    minHeight: AUTH_SIZE.minTouchTarget,
+    borderRadius: AUTH_SIZE.buttonRadius,
+    backgroundColor: AUTH_COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+  },
+  primaryButtonDisabled: {
+    opacity: 0.6,
+  },
+  primaryButtonText: {
+    color: AUTH_COLORS.primaryTextOnPrimary,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  bottomLink: {
+    minHeight: AUTH_SIZE.minTouchTarget,
+    marginTop: 'auto',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 20,
+  },
+  bottomLinkText: {
+    color: AUTH_COLORS.link,
+    fontSize: 15,
+    fontWeight: '600',
+  },
 });

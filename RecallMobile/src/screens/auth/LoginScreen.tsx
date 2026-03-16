@@ -1,86 +1,45 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Vibration, TextInput, KeyboardAvoidingView,
-  Platform, Keyboard
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StatusBar,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Feather from 'react-native-vector-icons/Feather';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '@env';
-import { useAuth } from '../../context/AuthContext';
+import { AUTH_COLORS, AUTH_SHADOW, AUTH_SIZE } from './authDesign';
 
 export default function LoginScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
-  const { login } = useAuth();
-
-  const [pin, setPin] = useState('');
+  const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [shopName, setShopName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+  const isValid = phone.length === 10;
 
-  useEffect(() => {
-    const loadStored = async () => {
-      try {
-        const storedPhone = await AsyncStorage.getItem('recall_phone');
-        const storedShopName = await AsyncStorage.getItem('recall_shop_name');
-        if (storedPhone) setPhone(storedPhone);
-        if (storedShopName) setShopName(storedShopName);
-      } catch {}
-    };
-    loadStored();
-
-    const showSub = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
-    const hideSub = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
-    setTimeout(() => inputRef.current?.focus(), 400);
-
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
-
-  const handleCardPress = () => {
-    Keyboard.dismiss();
-    setTimeout(() => inputRef.current?.focus(), 120);
-  };
-
-  const handlePinChange = (val: string) => {
-    const digits = val.replace(/\D/g, '').slice(0, 6);
-    setPin(digits);
-    setError('');
-    if (digits.length === 6) handleLogin(digits);
-  };
-
-  const triggerError = (msg: string) => {
-    Vibration.vibrate([0, 80, 80, 80]);
-    setError(msg);
-    setPin('');
-    setTimeout(() => inputRef.current?.focus(), 150);
-  };
-
-  const handleLogin = async (enteredPin: string) => {
+  const handleSendOTP = async () => {
+    if (!isValid || loading) {
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/login`, {
+      const res = await fetch(`${API_BASE_URL}/auth/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, pin: enteredPin })
+        body: JSON.stringify({ phone }),
       });
       const json = await res.json();
-      if (!res.ok) {
-        triggerError(json.detail || 'Incorrect PIN');
-        return;
-      }
-      await AsyncStorage.setItem('recall_phone', phone);
-      await AsyncStorage.setItem('recall_shop_name', json.shop_name);
-      await login(json.token, json.shop_id, json.shop_name);
-    } catch {
-      triggerError('Connection failed. Check network.');
+      if (!res.ok) throw new Error(json.detail || 'Failed to send OTP');
+      navigation.replace('VerifyOTP', { phone, mode: 'login' });
+    } catch (e: any) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
@@ -91,106 +50,185 @@ export default function LoginScreen({ navigation }: any) {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
-        <Text style={styles.headerSub}>RECALL AI</Text>
-        <Text style={styles.headerTitle}>
-          {shopName ? 'Welcome back' : 'Login'}
-        </Text>
-        {shopName ? <Text style={styles.shopName}>{shopName}</Text> : null}
-      </View>
-
-      <View style={[styles.body, { paddingBottom: insets.bottom + 24 }]}>
-
-        <TextInput
-          ref={inputRef}
-          style={styles.hiddenInput}
-          value={pin}
-          onChangeText={handlePinChange}
-          keyboardType="number-pad"
-          maxLength={6}
-          caretHidden
-          autoFocus
+      <StatusBar barStyle="dark-content" backgroundColor={AUTH_COLORS.background} />
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 24 },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.appName}>Recall AI</Text>
+        <Image
+          source={require('../../assets/kirana_illustration.gif')}
+          style={{ width: 240, height: 240 }}
+          resizeMode="contain"
         />
 
-        <View style={styles.card} onTouchStart={handleCardPress}>
-          <View style={styles.iconWrap}>
-            {loading
-              ? <ActivityIndicator color="#3B82F6" size="small" />
-              : <Feather name="lock" size={28} color="#3B82F6" />
-            }
-          </View>
-          <Text style={styles.cardTitle}>Enter your PIN</Text>
-          <Text style={styles.cardSub}>6-digit security PIN</Text>
+        <View style={styles.card}>
+          <Text style={styles.heading}>Welcome back</Text>
+          <Text style={styles.subtitle}>Enter your number to continue</Text>
 
-          <View style={styles.dotsRow}>
-            {[0,1,2,3,4,5].map(i => (
-              <View key={i} style={[
-                styles.dot,
-                pin.length > i && styles.dotFilled,
-                !!error && styles.dotError,
-                pin.length === i && !error && styles.dotActive,
-              ]} />
-            ))}
-          </View>
-
-          {error ? (
-            <View style={styles.errorRow}>
-              <Feather name="alert-circle" size={14} color="#EF4444" />
-              <Text style={styles.errorText}>{error}</Text>
+          <View style={styles.phoneRow}>
+            <View style={styles.phonePrefix}>
+              <Text style={styles.phonePrefixText}>🇮🇳 +91</Text>
             </View>
-          ) : (
-            <Text style={styles.hint}>
-              {isKeyboardVisible ? 'Enter your 6-digit PIN' : 'Tap here to enter PIN'}
-            </Text>
-          )}
+            <TextInput
+              style={styles.phoneInput}
+              placeholder="Enter 10 digit number"
+              placeholderTextColor={AUTH_COLORS.inputPlaceholder}
+              keyboardType="phone-pad"
+              value={phone}
+              onChangeText={value => {
+                setPhone(value.replace(/\D/g, ''));
+                setError('');
+              }}
+              maxLength={10}
+              autoFocus
+            />
+          </View>
+
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          <TouchableOpacity
+            style={[styles.primaryButton, (!isValid || loading) && styles.primaryButtonDisabled]}
+            onPress={handleSendOTP}
+            disabled={!isValid || loading}
+            activeOpacity={0.9}
+          >
+            {loading ? (
+              <ActivityIndicator color={AUTH_COLORS.primaryTextOnPrimary} />
+            ) : (
+              <Text style={styles.primaryButtonText}>Send OTP</Text>
+            )}
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity
+          style={styles.bottomLink}
           onPress={() => navigation.replace('SendOTP')}
-          style={styles.registerLink}
+          activeOpacity={0.85}
         >
-          <Feather name="plus-circle" size={15} color="#3B82F6" />
-          <Text style={styles.registerText}>Register a new shop</Text>
+          <Text style={styles.bottomLinkText}>New here? Register your shop</Text>
         </TouchableOpacity>
-
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: {
-    backgroundColor: '#0F172A', borderBottomLeftRadius: 32, borderBottomRightRadius: 32,
-    paddingBottom: 32, paddingHorizontal: 24,
+  container: {
+    flex: 1,
+    backgroundColor: AUTH_COLORS.background,
   },
-  headerSub: { color: '#64748B', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 },
-  headerTitle: { color: '#FFFFFF', fontSize: 26, fontWeight: '800', marginBottom: 2 },
-  shopName: { color: '#3B82F6', fontSize: 15, fontWeight: '700', marginTop: 4 },
-  body: { flex: 1, paddingHorizontal: 16, paddingTop: 24 },
-  hiddenInput: { position: 'absolute', opacity: 0, width: 1, height: 1 },
+  content: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+  },
+  appName: {
+    alignSelf: 'center',
+    color: AUTH_COLORS.appName,
+    fontSize: AUTH_SIZE.appNameSize,
+    fontWeight: '700',
+    marginBottom: 28,
+  },
+  illustration: {
+    width: '100%',
+    height: 180,
+    marginBottom: 28,
+  },
+  illustrationPlaceholder: {
+    width: '100%',
+    height: 180,
+    borderRadius: 16,
+    backgroundColor: AUTH_COLORS.illustrationPlaceholder,
+    marginBottom: 28,
+  },
   card: {
-    backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, marginBottom: 20,
-    shadowColor: '#64748B', shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08, shadowRadius: 16, elevation: 4,
+    backgroundColor: AUTH_COLORS.card,
+    borderRadius: AUTH_SIZE.cardRadius,
+    padding: AUTH_SIZE.cardPadding,
+    ...AUTH_SHADOW,
   },
-  iconWrap: {
-    width: 56, height: 56, borderRadius: 16, backgroundColor: '#EFF6FF',
-    justifyContent: 'center', alignItems: 'center', marginBottom: 16,
+  heading: {
+    color: AUTH_COLORS.heading,
+    fontSize: AUTH_SIZE.headingSize,
+    fontWeight: '800',
+    marginBottom: 8,
   },
-  cardTitle: { fontSize: 20, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
-  cardSub: { fontSize: 14, color: '#64748B', fontWeight: '500', marginBottom: 24 },
-  dotsRow: { flexDirection: 'row', gap: 14, justifyContent: 'center', marginBottom: 16 },
-  dot: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: '#CBD5E1', backgroundColor: 'transparent' },
-  dotActive: { borderColor: '#3B82F6', borderWidth: 2.5 },
-  dotFilled: { backgroundColor: '#3B82F6', borderColor: '#3B82F6' },
-  dotError: { borderColor: '#EF4444', backgroundColor: '#FEF2F2' },
-  errorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  errorText: { color: '#EF4444', fontSize: 13, fontWeight: '600' },
-  hint: { color: '#94A3B8', fontSize: 12, textAlign: 'center', fontWeight: '500' },
-  registerLink: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, marginTop: 'auto', paddingTop: 24,
+  subtitle: {
+    color: AUTH_COLORS.subtitle,
+    fontSize: AUTH_SIZE.subtitleSize,
+    fontWeight: '400',
+    marginBottom: 24,
   },
-  registerText: { color: '#3B82F6', fontSize: 14, fontWeight: '700' },
+  phoneRow: {
+    height: AUTH_SIZE.inputHeight,
+    minHeight: AUTH_SIZE.minTouchTarget,
+    backgroundColor: AUTH_COLORS.inputBackground,
+    borderWidth: 1,
+    borderColor: AUTH_COLORS.inputBorder,
+    borderRadius: AUTH_SIZE.inputRadius,
+    flexDirection: 'row',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  phonePrefix: {
+    height: '100%',
+    minWidth: 92,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRightWidth: 1,
+    borderRightColor: AUTH_COLORS.inputBorder,
+    paddingHorizontal: 10,
+  },
+  phonePrefixText: {
+    color: AUTH_COLORS.inputText,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  phoneInput: {
+    flex: 1,
+    height: '100%',
+    paddingHorizontal: 14,
+    color: AUTH_COLORS.inputText,
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  errorText: {
+    color: AUTH_COLORS.error,
+    fontSize: 13,
+    marginTop: 10,
+    marginBottom: 2,
+  },
+  primaryButton: {
+    width: '100%',
+    height: AUTH_SIZE.buttonHeight,
+    minHeight: AUTH_SIZE.minTouchTarget,
+    borderRadius: AUTH_SIZE.buttonRadius,
+    backgroundColor: AUTH_COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+  },
+  primaryButtonDisabled: {
+    opacity: 0.6,
+  },
+  primaryButtonText: {
+    color: AUTH_COLORS.primaryTextOnPrimary,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  bottomLink: {
+    minHeight: AUTH_SIZE.minTouchTarget,
+    marginTop: 'auto',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 20,
+  },
+  bottomLinkText: {
+    color: AUTH_COLORS.link,
+    fontWeight: '600',
+    fontSize: 15,
+  },
 });
