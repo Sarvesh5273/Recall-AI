@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+
 import {
   View,
   Text,
@@ -8,7 +9,6 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
-  ScrollView,
   StatusBar,
   Image,
 } from 'react-native';
@@ -47,71 +47,63 @@ export default function LoginScreen({ navigation }: any) {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { paddingBottom: insets.bottom + 24 }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <StatusBar barStyle="dark-content" backgroundColor={AUTH_COLORS.background} />
-      <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 24 },
-        ]}
-        keyboardShouldPersistTaps="handled"
-      >
+      <View style={[styles.topSection, { paddingTop: insets.top + 24 }]}>
         <Text style={styles.appName}>Recall AI</Text>
         <Image
-          source={require('../../assets/kirana_illustration.gif')}
-          style={{ width: 240, height: 240 }}
+          source={require('../../assets/kirana_illustration.png')}
+          style={styles.illustration}
           resizeMode="contain"
         />
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.heading}>Welcome back</Text>
+        <Text style={styles.subtitle}>Enter your number to continue</Text>
 
-        <View style={styles.card}>
-          <Text style={styles.heading}>Welcome back</Text>
-          <Text style={styles.subtitle}>Enter your number to continue</Text>
-
-          <View style={styles.phoneRow}>
-            <View style={styles.phonePrefix}>
-              <Text style={styles.phonePrefixText}>🇮🇳 +91</Text>
-            </View>
-            <TextInput
-              style={styles.phoneInput}
-              placeholder="Enter 10 digit number"
-              placeholderTextColor={AUTH_COLORS.inputPlaceholder}
-              keyboardType="phone-pad"
-              value={phone}
-              onChangeText={value => {
-                setPhone(value.replace(/\D/g, ''));
-                setError('');
-              }}
-              maxLength={10}
-              autoFocus
-            />
+        <View style={styles.phoneRow}>
+          <View style={styles.phonePrefix}>
+            <Text style={styles.phonePrefixText}>🇮🇳 +91</Text>
           </View>
-
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-          <TouchableOpacity
-            style={[styles.primaryButton, (!isValid || loading) && styles.primaryButtonDisabled]}
-            onPress={handleSendOTP}
-            disabled={!isValid || loading}
-            activeOpacity={0.9}
-          >
-            {loading ? (
-              <ActivityIndicator color={AUTH_COLORS.primaryTextOnPrimary} />
-            ) : (
-              <Text style={styles.primaryButtonText}>Send OTP</Text>
-            )}
-          </TouchableOpacity>
+          <TextInput
+            style={styles.phoneInput}
+            placeholder="Enter 10 digit number"
+            placeholderTextColor={AUTH_COLORS.inputPlaceholder}
+            keyboardType="phone-pad"
+            value={phone}
+            onChangeText={value => {
+              setPhone(value.replace(/\D/g, ''));
+              setError('');
+            }}
+            maxLength={10}
+            autoFocus
+          />
         </View>
 
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
         <TouchableOpacity
-          style={styles.bottomLink}
-          onPress={() => navigation.replace('SendOTP')}
-          activeOpacity={0.85}
+          style={[styles.primaryButton, (!isValid || loading) && styles.primaryButtonDisabled]}
+          onPress={handleSendOTP}
+          disabled={!isValid || loading}
+          activeOpacity={0.9}
         >
-          <Text style={styles.bottomLinkText}>New here? Register your shop</Text>
+          {loading ? (
+            <ActivityIndicator color={AUTH_COLORS.primaryTextOnPrimary} />
+          ) : (
+            <Text style={styles.primaryButtonText}>Send OTP</Text>
+          )}
         </TouchableOpacity>
-      </ScrollView>
+      </View>
+      <TouchableOpacity
+        style={styles.bottomLink}
+        onPress={() => navigation.replace('SendOTP')}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.bottomLinkText}>New here? Register your shop</Text>
+      </TouchableOpacity>
     </KeyboardAvoidingView>
   );
 }
@@ -120,29 +112,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: AUTH_COLORS.background,
-  },
-  content: {
-    flexGrow: 1,
     paddingHorizontal: 24,
+    justifyContent: 'space-between',
+  },
+  topSection: {
+    alignItems: 'center',
   },
   appName: {
-    alignSelf: 'center',
     color: AUTH_COLORS.appName,
-    fontSize: AUTH_SIZE.appNameSize,
-    fontWeight: '700',
-    marginBottom: 28,
+    fontSize: 28,
+    fontWeight: '800',
+    marginBottom: 12,
   },
   illustration: {
     width: '100%',
     height: 180,
-    marginBottom: 28,
-  },
-  illustrationPlaceholder: {
-    width: '100%',
-    height: 180,
-    borderRadius: 16,
-    backgroundColor: AUTH_COLORS.illustrationPlaceholder,
-    marginBottom: 28,
+    marginBottom: 0,
   },
   card: {
     backgroundColor: AUTH_COLORS.card,
@@ -220,11 +205,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   bottomLink: {
-    minHeight: AUTH_SIZE.minTouchTarget,
-    marginTop: 'auto',
+    paddingVertical: 20,
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 20,
   },
   bottomLinkText: {
     color: AUTH_COLORS.link,

@@ -57,6 +57,7 @@ interface AuthState {
   token: string | null;
   shopId: string | null;
   shopName: string | null;
+  phone: string | null;
   plan: string;
   isLoading: boolean;
   localPinSet: boolean;   // PIN saved in AsyncStorage on THIS device
@@ -64,7 +65,7 @@ interface AuthState {
 }
 
 interface AuthContextType extends AuthState {
-  login: (token: string, shopId: string, shopName: string) => Promise<void>;
+  login: (token: string, shopId: string, shopName: string, phone?: string) => Promise<void>;
   logout: () => Promise<void>;
   setPinVerified: () => void;         // called by PINLockScreen on correct PIN
   setLocalPinSet: () => void;         // called by SetPINScreen after saving PIN locally
@@ -77,6 +78,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     token: null,
     shopId: null,
     shopName: null,
+    phone: null,
     plan: 'free',
     isLoading: true,
     localPinSet: false,
@@ -104,6 +106,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             token,
             shopId: json.shop_id,
             shopName: json.shop_name,
+            phone: json.phone ?? null,
             plan: json.plan ?? 'free',
             isLoading: false,
             localPinSet: !!pin,
@@ -124,15 +127,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     restore();
   }, []);
 
-  const login = async (token: string, shopId: string, shopName: string) => {
+  const login = async (token: string, shopId: string, shopName: string, phone: string = '') => {
     await AsyncStorage.setItem('recall_token', token);
     await AsyncStorage.setItem('recall_shop_id', shopId);
     await AsyncStorage.setItem('recall_shop_name', shopName);
+    await AsyncStorage.setItem('recall_phone', phone);
     setState(s => ({
       ...s,
       token,
       shopId,
       shopName,
+      phone: phone || null,
     }));
     // Sync catalog in background — non-blocking, won't delay login
     syncCatalogIfNeeded(token);
@@ -144,7 +149,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       'recall_phone', 'recall_pin',
     ]);
     setState({
-      token: null, shopId: null, shopName: null, plan: 'free',
+      token: null, shopId: null, shopName: null, phone: null, plan: 'free',
       isLoading: false, localPinSet: false, pinVerified: false,
     });
   };

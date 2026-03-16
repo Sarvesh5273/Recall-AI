@@ -11,7 +11,7 @@ import {
   ScrollView,
   StatusBar,
 } from 'react-native';
-import Feather from 'react-native-vector-icons/Feather';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_BASE_URL } from '@env';
 import { useAuth } from '../../context/AuthContext';
 import { AUTH_COLORS, AUTH_SHADOW, AUTH_SIZE } from './authDesign';
@@ -21,6 +21,7 @@ const OTP_LENGTH = 6;
 export default function VerifyOTPScreen({ route, navigation }: any) {
   const { phone, mode } = route.params;
   const { login } = useAuth();
+  const insets = useSafeAreaInsets();
   const inputRefs = useRef<(TextInput | null)[]>([]);
 
   const [otp, setOtp] = useState(Array.from({ length: OTP_LENGTH }, () => ''));
@@ -97,7 +98,7 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
       const json = await res.json();
 
       if (res.ok) {
-        await login(json.token, json.shop_id, json.shop_name);
+        await login(json.token, json.shop_id, json.shop_name, phone);
         return;
       }
 
@@ -149,7 +150,7 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { paddingTop: insets.top + 24 }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <StatusBar barStyle="dark-content" backgroundColor={AUTH_COLORS.background} />
@@ -157,14 +158,6 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backButton}
-          activeOpacity={0.85}
-        >
-          <Feather name="arrow-left" size={20} color={AUTH_COLORS.primary} />
-        </TouchableOpacity>
-
         <Text style={styles.heading}>Verify Number</Text>
         <Text style={styles.subtitle}>6-digit OTP sent to {maskedPhone}</Text>
 
@@ -222,6 +215,14 @@ export default function VerifyOTPScreen({ route, navigation }: any) {
               </TouchableOpacity>
             )}
           </View>
+          <TouchableOpacity
+            onPress={() => navigation.replace('Login')}
+            style={{ alignItems: 'center', paddingTop: 12 }}
+          >
+            <Text style={{ color: AUTH_COLORS.link, fontSize: 14, fontWeight: '600' }}>
+              Change number
+            </Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

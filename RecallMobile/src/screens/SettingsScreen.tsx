@@ -1,21 +1,19 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, TextInput, Modal } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from 'react-native-vector-icons/Feather';
-import { database } from '../database';
-import Quarantine from '../database/Quarantine';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage, LANGUAGES, Language } from '../context/LanguageContext';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { shopName, phone } = useAuth() as any;
+  const { shopName, phone, logout } = useAuth() as any;
   const { language, setLanguage, t } = useLanguage();
 
-  const [isClearing, setIsClearing] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(shopName ?? 'My Shop');
   const [showLanguagePicker, setShowLanguagePicker] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const currentLang = LANGUAGES.find(l => l.code === language);
 
@@ -29,33 +27,25 @@ export default function SettingsScreen() {
     setShowLanguagePicker(false);
   };
 
-  const handleLogout = () => {
-    Alert.alert(t('settings_logout_title'), t('settings_logout_msg'), [
-      { text: t('cancel'), style: 'cancel' },
-      { text: t('settings_logout'), style: 'destructive', onPress: () => console.log('logout') }
-    ]);
-  };
-
-  const handleClearInbox = () => {
-    Alert.alert(t('settings_clear_title'), t('settings_clear_msg'), [
-      { text: t('cancel'), style: 'cancel' },
-      { text: t('settings_clear_confirm'), style: 'destructive', onPress: async () => {
-          setIsClearing(true);
-          try {
-            await database.write(async () => {
-              const allItems = await database.get<Quarantine>('quarantine').query().fetch();
-              await database.batch(...allItems.map(i => i.prepareDestroyPermanently()));
-            });
-            Alert.alert(t('settings_cleared'), t('settings_cleared_msg'));
-          } catch { Alert.alert(t('error'), 'Could not clear the local database.'); }
-          finally { setIsClearing(false); }
-        }
-      }
-    ]);
-  };
+  const handleLogout = () => setShowLogoutModal(true);
 
   return (
     <View style={styles.container}>
+      <Modal visible={showLogoutModal} transparent animationType="fade">
+        <View style={styles.logoutOverlay}>
+          <View style={styles.logoutSheet}>
+            <Text style={styles.logoutSheetTitle}>Logout</Text>
+            <Text style={styles.logoutSheetMsg}>Are you sure you want to logout from Recall AI?</Text>
+            <TouchableOpacity style={styles.logoutConfirmBtn} onPress={async () => { setShowLogoutModal(false); await logout(); }}>
+              <Text style={styles.logoutConfirmText}>Yes, Logout</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.logoutCancelBtn} onPress={() => setShowLogoutModal(false)}>
+              <Text style={styles.logoutCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* Language Picker Modal */}
       <Modal visible={showLanguagePicker} transparent animationType="slide">
         <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowLanguagePicker(false)} activeOpacity={1}>
@@ -99,7 +89,7 @@ export default function SettingsScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.infoLabel}>{t('settings_mobile')}</Text>
-              <Text style={styles.profilePhone}>{phone ?? '+91 XXXXX XXXXX'}</Text>
+              <Text style={styles.profilePhone}>{phone ? phone.replace('+91', '+91 ') : '—'}</Text>
             </View>
           </View>
           <View style={styles.divider} />
@@ -132,36 +122,13 @@ export default function SettingsScreen() {
             <Feather name="chevron-right" size={20} color="#CBD5E1" />
           </TouchableOpacity>
           <View style={styles.divider} />
-          <TouchableOpacity style={styles.actionRow} onPress={() => Alert.alert('Success', 'Report generated.')}>
+          <TouchableOpacity style={styles.actionRow} onPress={() => Alert.alert('Coming Soon', 'Khata report will be available in the next update.')}>
             <View style={styles.actionIcon}><Feather name="file-text" size={18} color="#3B82F6" /></View>
             <View style={styles.actionTextContainer}>
               <Text style={styles.actionTitle}>{t('settings_khata')}</Text>
               <Text style={styles.actionSub}>{t('settings_khata_sub')}</Text>
             </View>
             <Feather name="chevron-right" size={20} color="#CBD5E1" />
-          </TouchableOpacity>
-        </View>
-
-        {/* System */}
-        <Text style={styles.sectionTitle}>{t('settings_system')}</Text>
-        <View style={styles.card}>
-          <View style={styles.actionRow}>
-            <View style={styles.actionIcon}><Feather name="check-circle" size={18} color="#3B82F6" /></View>
-            <View style={styles.actionTextContainer}>
-              <Text style={styles.actionTitle}>{t('settings_backup')}</Text>
-              <Text style={styles.actionSub}>{t('settings_backup_sub')}</Text>
-            </View>
-          </View>
-          <View style={styles.divider} />
-          <TouchableOpacity style={styles.actionRow} onPress={handleClearInbox} disabled={isClearing}>
-            <View style={[styles.actionIcon, { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#EF4444' }]}>
-              <Feather name="trash-2" size={18} color="#EF4444" />
-            </View>
-            <View style={styles.actionTextContainer}>
-              <Text style={[styles.actionTitle, { color: '#EF4444' }]}>{t('settings_clear_inbox')}</Text>
-              <Text style={styles.actionSub}>{t('settings_clear_sub')}</Text>
-            </View>
-            {isClearing ? <ActivityIndicator size="small" color="#EF4444" /> : <Feather name="chevron-right" size={20} color="#CBD5E1" />}
           </TouchableOpacity>
         </View>
 
@@ -206,6 +173,14 @@ const styles = StyleSheet.create({
   logoutButton: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#EF4444', borderRadius: 16, paddingVertical: 16, alignItems: 'center', marginBottom: 20 },
   logoutText: { color: '#EF4444', fontSize: 16, fontWeight: '800' },
   versionText: { textAlign: 'center', color: '#94A3B8', fontSize: 13, marginTop: 10, fontWeight: '600' },
+  logoutOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
+  logoutSheet: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 28, width: '100%' },
+  logoutSheetTitle: { fontSize: 20, fontWeight: '800', color: '#0F172A', marginBottom: 8, textAlign: 'center' },
+  logoutSheetMsg: { fontSize: 15, color: '#64748B', fontWeight: '500', textAlign: 'center', marginBottom: 28, lineHeight: 22 },
+  logoutConfirmBtn: { backgroundColor: '#EF4444', borderRadius: 16, paddingVertical: 16, alignItems: 'center', marginBottom: 12 },
+  logoutConfirmText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  logoutCancelBtn: { backgroundColor: '#F1F5F9', borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
+  logoutCancelText: { color: '#1E293B', fontSize: 16, fontWeight: '700' },
   // Language Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalSheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 24, paddingTop: 12 },
