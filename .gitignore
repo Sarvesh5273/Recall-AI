@@ -34,3 +34,7 @@ Thumbs.db
 admin-portal/.vite
 admin-portal/dist
 admin-portal/node_modules
+backend.zip
+webapp_logs.zip
+webapp_logs/
+startup.txt
