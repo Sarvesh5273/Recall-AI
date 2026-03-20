@@ -8,3 +8,4 @@ ios/
 vendor/
 .bundle/
 .expo/
+android/gradle.properties

@@ -7,6 +7,7 @@ import time
 import logging
 import base64
 import threading
+import subprocess
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -417,6 +418,19 @@ async def process_ledger(
             )
             await run_blocking(store_job_owner, job_id, shop_id)
             await run_blocking(store_job_status, job_id, "queued", "Waiting for worker...")
+
+            # ── BURST WORKER — wake on demand, sleep when queue empty ────────
+            # Spawns RQ worker in --burst mode: processes all jobs then exits.
+            # Zero Redis commands when idle. Fire and forget — do not await.
+            redis_url = os.getenv("REDIS_URL", "")
+            if redis_url:
+                subprocess.Popen(
+                    ["rq", "worker", "--burst", "--url", redis_url, "recall-ledger"],
+                    close_fds=True
+                )
+                logger.info(f"Burst worker triggered for job {job_id}")
+            # ────────────────────────────────────────────────────────────────
+
             logger.info(f"Job {job_id} enqueued for shop {shop_id}")
             return {
                 "status": "processing",
