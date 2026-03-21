@@ -403,6 +403,7 @@ async def process_ledger(
                 queue.enqueue,
                 process_ledger_job,
                 job_id=job_id,
+                ledger_job_id=job_id,
                 shop_id=shop_id,
                 scan_type=scan_type,
                 scan_id=scan_id,
@@ -413,7 +414,6 @@ async def process_ledger(
                 current_month=current_month,
                 usage_doc_id=usage_doc_id,
                 usage_exists=bool(usage_records),
-                job_id_override=job_id,
                 job_timeout=120,
             )
             await run_blocking(store_job_owner, job_id, shop_id)

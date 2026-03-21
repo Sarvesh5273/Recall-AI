@@ -112,7 +112,7 @@ def get_job_owner(job_id: str):
 # This runs in the RQ worker process, not in the FastAPI server
 
 def process_ledger_job(
-    job_id: str,
+    ledger_job_id: str,
     shop_id: str,
     scan_type: str,
     scan_id: str,  # Can be None but using str type for Python 3.9 compat
@@ -133,7 +133,7 @@ def process_ledger_job(
     from circuit_breaker import sarvam_circuit, openai_circuit
     from openai import AzureOpenAI
     
-    store_job_status(job_id, "processing", "Starting OCR...")
+    store_job_status(ledger_job_id, "processing", "Starting OCR...")
     container = None
     
     try:
@@ -154,33 +154,33 @@ def process_ledger_job(
         container = db.get_container()
         
         # ── 1. SARVAM OCR ────────────────────────────────────────────────────
-        store_job_status(job_id, "processing", "Running OCR...")
+        store_job_status(ledger_job_id, "processing", "Running OCR...")
         
         if not sarvam_circuit.is_available():
-            store_job_result(job_id, {"status": "error", "error": "Sarvam OCR temporarily unavailable"})
-            store_job_status(job_id, "failed")
+            store_job_result(ledger_job_id, {"status": "error", "error": "Sarvam OCR temporarily unavailable"})
+            store_job_status(ledger_job_id, "failed")
             return
         
         files = {"file": (filename, image_bytes, content_type)}
         t_sarvam = time.time()
         response = requests.post(SARVAM_API_URL, headers=SARVAM_HEADERS, files=files, data={"prompt_type": "default_ocr"}, timeout=30.0)
-        logger.info(f"[Job {job_id}] Sarvam OCR: {time.time()-t_sarvam:.2f}s")
+        logger.info(f"[Job {ledger_job_id}] Sarvam OCR: {time.time()-t_sarvam:.2f}s")
         
         if response.status_code != 200:
             sarvam_circuit.record_failure()
-            store_job_result(job_id, {"status": "error", "error": "Sarvam OCR failed"})
-            store_job_status(job_id, "failed")
+            store_job_result(ledger_job_id, {"status": "error", "error": "Sarvam OCR failed"})
+            store_job_status(ledger_job_id, "failed")
             return
         sarvam_circuit.record_success()
         
         raw_markdown = response.json().get("message", response.json().get("text", str(response.json())))
         
         # ── 2. GPT EXTRACTION ────────────────────────────────────────────────
-        store_job_status(job_id, "processing", "Extracting items...")
+        store_job_status(ledger_job_id, "processing", "Extracting items...")
         
         if not openai_circuit.is_available():
-            store_job_result(job_id, {"status": "error", "error": "OpenAI temporarily unavailable"})
-            store_job_status(job_id, "failed")
+            store_job_result(ledger_job_id, {"status": "error", "error": "OpenAI temporarily unavailable"})
+            store_job_status(ledger_job_id, "failed")
             return
         
         t_gpt = time.time()
@@ -204,7 +204,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
             temperature=0.1,
             timeout=45.0,
         )
-        logger.info(f"[Job {job_id}] GPT-4o-mini: {time.time()-t_gpt:.2f}s")
+        logger.info(f"[Job {ledger_job_id}] GPT-4o-mini: {time.time()-t_gpt:.2f}s")
         openai_circuit.record_success()
         
         try:
@@ -212,13 +212,13 @@ If the same item appears multiple times with the same unit, sum the quantities a
             if not isinstance(structured_items, list):
                 structured_items = []
         except (json.JSONDecodeError, AttributeError) as parse_err:
-            logger.warning(f"[Job {job_id}] GPT parse error: {parse_err}")
+            logger.warning(f"[Job {ledger_job_id}] GPT parse error: {parse_err}")
             structured_items = []
         
-        logger.info(f"[Job {job_id}] Extracted {len(structured_items)} items")
+        logger.info(f"[Job {ledger_job_id}] Extracted {len(structured_items)} items")
         
         # ── 3. BATCH MATCHING ────────────────────────────────────────────────
-        store_job_status(job_id, "processing", "Matching items...")
+        store_job_status(ledger_job_id, "processing", "Matching items...")
         
         # Import batch_sort_items and other helpers
         from main import batch_sort_items, safe_float
@@ -246,7 +246,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
         sort_results = batch_sort_items(structured_items, shop_id)
         
         # ── 4. PROCESS ITEMS ─────────────────────────────────────────────────
-        store_job_status(job_id, "processing", "Updating inventory...")
+        store_job_status(ledger_job_id, "processing", "Updating inventory...")
         
         for item in structured_items:
             raw_name = str(item.get("raw_name", "")).strip()
@@ -425,16 +425,16 @@ If the same item appears multiple times with the same unit, sum the quantities a
             },
             "data": results
         }
-        store_job_result(job_id, final_result)
-        store_job_status(job_id, "completed")
-        logger.info(f"[Job {job_id}] Completed: {len(results['clean_inventory'])} clean, {len(results['quarantined'])} quarantined")
+        store_job_result(ledger_job_id, final_result)
+        store_job_status(ledger_job_id, "completed")
+        logger.info(f"[Job {ledger_job_id}] Completed: {len(results['clean_inventory'])} clean, {len(results['quarantined'])} quarantined")
         
     except Exception as e:
-        logger.error(f"[Job {job_id}] Failed: {e}", exc_info=True)
+        logger.error(f"[Job {ledger_job_id}] Failed: {e}", exc_info=True)
         if scan_id and container is not None:
             try:
                 container.delete_item(item=scan_id, partition_key=shop_id)
             except Exception as cleanup_err:
-                logger.warning(f"[Job {job_id}] Failed to clear idempotency marker: {cleanup_err}")
-        store_job_result(job_id, {"status": "error", "error": str(e)})
-        store_job_status(job_id, "failed")
+                logger.warning(f"[Job {ledger_job_id}] Failed to clear idempotency marker: {cleanup_err}")
+        store_job_result(ledger_job_id, {"status": "error", "error": str(e)})
+        store_job_status(ledger_job_id, "failed")
