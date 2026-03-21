@@ -204,7 +204,7 @@ Never use: 'units', 'packets', 'nos', 'numbers', 'packet' — convert them to 'p
 Never use: 'litre', 'liter', 'ltr' — convert to 'L'.
 Never use: 'kilogram', 'kilo' — convert to 'kg'.
 If the same item appears multiple times with the same unit, sum the quantities and return it once."""},
-                {"role": "user", "content": f"Convert this OCR text to JSON array 'items': {raw_markdown}"}
+                {"role": "user", "content": f"Convert this OCR text to JSON array 'items'. Note: items may be written as 'ItemName - quantity unit' with a dash separator. Treat the dash as a separator between item name and quantity, not as part of the name: {raw_markdown}"}
             ],
             response_format={"type": "json_object"},
             temperature=0.1,
