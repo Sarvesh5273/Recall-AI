@@ -153,28 +153,37 @@ def process_ledger_job(
         
         container = db.get_container()
         
-        # ── 1. SARVAM OCR ────────────────────────────────────────────────────
+        # ── 1. GOOGLE VISION OCR ─────────────────────────────────────────────
         store_job_status(ledger_job_id, "processing", "Running OCR...")
-        
-        if not sarvam_circuit.is_available():
-            store_job_result(ledger_job_id, {"status": "error", "error": "Sarvam OCR temporarily unavailable"})
-            store_job_status(ledger_job_id, "failed")
-            return
-        
-        files = {"file": (filename, image_bytes, content_type)}
-        t_sarvam = time.time()
-        response = requests.post(SARVAM_API_URL, headers=SARVAM_HEADERS, files=files, data={"prompt_type": "default_ocr"}, timeout=30.0)
-        logger.info(f"[Job {ledger_job_id}] Sarvam OCR: {time.time()-t_sarvam:.2f}s")
-        
+
+        import base64 as b64lib
+        t_ocr = time.time()
+        GOOGLE_VISION_API_KEY = os.getenv("GOOGLE_VISION_API_KEY")
+        vision_payload = {
+            "requests": [{
+                "image": {"content": b64lib.b64encode(image_bytes).decode("utf-8")},
+                "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+                "imageContext": {"languageHints": ["hi", "mr", "gu", "en"]}
+            }]
+        }
+        response = requests.post(
+            f"https://vision.googleapis.com/v1/images:annotate?key={GOOGLE_VISION_API_KEY}",
+            json=vision_payload,
+            timeout=30.0
+        )
+        logger.info(f"[Job {ledger_job_id}] Google Vision OCR: {time.time()-t_ocr:.2f}s")
+
         if response.status_code != 200:
-            sarvam_circuit.record_failure()
-            store_job_result(ledger_job_id, {"status": "error", "error": "Sarvam OCR failed"})
+            logger.error(f"[Job {ledger_job_id}] Google Vision HTTP {response.status_code}: {response.text[:300]}")
+            store_job_result(ledger_job_id, {"status": "error", "error": "OCR failed"})
             store_job_status(ledger_job_id, "failed")
             return
-        sarvam_circuit.record_success()
-        
-        raw_markdown = response.json().get("message", response.json().get("text", str(response.json())))
-        
+
+        raw_markdown = response.json().get("responses", [{}])[0].get("fullTextAnnotation", {}).get("text", "")
+        if not raw_markdown:
+            logger.warning(f"[Job {ledger_job_id}] Google Vision returned empty text")
+
+    
         # ── 2. GPT EXTRACTION ────────────────────────────────────────────────
         store_job_status(ledger_job_id, "processing", "Extracting items...")
         
@@ -271,21 +280,15 @@ If the same item appears multiple times with the same unit, sum the quantities a
                 if uid_to_update in processed_in_batch:
                     prev_unit = processed_in_batch[uid_to_update]
                     if prev_unit == unit.lower().strip():
-                        quarantine_item = {
-                            "id": str(uuid.uuid4()),
-                            "shop_id": shop_id,
-                            "type": "quarantine",
-                            "raw_text": raw_name,
-                            "quantity": qty,
-                            "unit": unit,
-                            "scan_type": scan_type,
-                            "status": "needs_review",
-                            "confidence_score": sort_result["confidence_score"] if sort_result else 0,
-                            "quarantine_reason": "Duplicate in same ledger — verify manually",
-                            "timestamp": datetime.now(timezone.utc).isoformat()
-                        }
-                        pending_quarantine_writes.append(quarantine_item)
-                        results["quarantined"].append(quarantine_item)
+                        # Same item, same unit — SUM quantities instead of quarantining
+                        if uid_to_update in pending_inventory_upserts:
+                            pending_inventory_upserts[uid_to_update]["quantity"] += qty_math
+                        else:
+                            existing_item = inventory_by_uid.get(uid_to_update)
+                            if existing_item:
+                                existing_item["quantity"] = safe_float(existing_item.get("quantity", 0), 0) + qty_math
+                                existing_item["last_updated"] = datetime.now(timezone.utc).isoformat()
+                                pending_inventory_upserts[uid_to_update] = existing_item
                         continue
                     else:
                         quarantine_item = {
@@ -306,7 +309,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
                         continue
                 else:
                     processed_in_batch[uid_to_update] = unit.lower().strip()
-            
+                    
             # Update or create inventory
             if uid_to_update:
                 existing_item = inventory_by_uid.get(uid_to_update)

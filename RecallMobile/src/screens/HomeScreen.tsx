@@ -74,10 +74,13 @@ export default function HomeScreen({ navigation }: any) {
   };
 
   useFocusEffect(useCallback(() => {
-    setIsLoading(true); // reset so spinner shows on re-focus
-    const timer = setTimeout(() => fetchDashboardData(), 2000);
-    return () => clearTimeout(timer);
-  }, [shopId]));
+    setIsLoading(true);
+    fetchDashboardData();
+    // Poll every 5s for 60s after returning to home (catches scan completion)
+    const interval = setInterval(() => fetchDashboardData(), 5000);
+    const stop = setTimeout(() => clearInterval(interval), 60000);
+    return () => { clearInterval(interval); clearTimeout(stop); };
+}, [shopId]));
 
   // Scan usage bar logic
   const scanLimit = usage.scan_limit;

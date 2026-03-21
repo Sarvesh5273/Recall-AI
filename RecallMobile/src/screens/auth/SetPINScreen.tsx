@@ -177,7 +177,7 @@ export default function SetPINScreen({ route }: any) {
       await playSuccessAnimation();
 
       if (registerResponse) {
-        await login(registerResponse.token, registerResponse.shop_id, registerResponse.shop_name);
+      await login(registerResponse.token, registerResponse.shop_id, registerResponse.shop_name, phone);
       }
       setPinVerified();
       setLocalPinSet();

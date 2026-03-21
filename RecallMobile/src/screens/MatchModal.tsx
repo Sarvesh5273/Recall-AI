@@ -82,15 +82,16 @@ export default function MatchModal({ route, navigation }: any) {
       const quarantineRecord: any = await database.get('quarantine').find(itemId);
       const finalQuantity = parseFloat(editableQuantity) || 1; 
 
-      const payload = {
+    const payload = {
         shop_id: shopId,
         uid: masterItem.uid,
         standard_name: masterItem.name,
-        quantity: finalQuantity, 
+        quantity: finalQuantity,
         unit: unit,
         scan_type: quarantineRecord.scanType || "IN",
-        raw_text: rawText
-      };
+        raw_text: rawText,
+        quarantine_id: itemId   // ← add this
+};
 
       const response = await fetch(`${API_BASE_URL}/sync-mapped-item`, {
         method: 'POST',

@@ -16,11 +16,6 @@ const AUTO_MATCH_THRESHOLD = 0.35;
 let isSyncProcessing = false;
 
 // ─── LOCAL EDGE MATCHER ───────────────────────────────────────────────────────
-// Runs entirely on-device against custom_skus only.
-// master_seed removed: Fuse on OCR text vs English catalog is unreliable for
-// regional languages (Hindi/Gujarati/Marathi) — GPT on backend handles that.
-// This only catches OCR variations of items the owner has already taught the app,
-// e.g. "khond" matching a saved custom SKU "khand" → Sugar.
 const tryLocalAutoMatch = async (
   rawText: string,
   quantity: number,
@@ -31,8 +26,6 @@ const tryLocalAutoMatch = async (
 ): Promise<boolean> => {
   try {
     const localCustoms = await database.get('custom_skus').query().fetch();
-
-    // Only match against custom SKUs — items owner explicitly named themselves
     if (localCustoms.length === 0) return false;
 
     const customData = localCustoms.map((c: any) => ({
@@ -87,6 +80,39 @@ const tryLocalAutoMatch = async (
 };
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── JOB POLLER ──────────────────────────────────────────────────────────────
+// Polls /job-status/{jobId} every 5s until completed/failed or 2min timeout.
+// Converts async backend response into the same shape as a sync success payload.
+const pollJobStatus = async (jobId: string, token: string | null): Promise<any> => {
+  const maxAttempts = 24; // 24 x 5s = 2 minutes max
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise<void>(res => setTimeout(() => res(), 5000));
+    try {
+      const res = await fetch(`${API_BASE_URL}/job-status/${jobId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        console.warn(`Job poll ${i + 1}/${maxAttempts}: HTTP ${res.status}`);
+        continue;
+      }
+      const data = await res.json();
+      console.log(`Job poll ${i + 1}/${maxAttempts}: status=${data.status}`);
+      if (data.status === 'completed') {
+        return { status: 'success', data: data.result?.data || {} };
+      }
+      if (data.status === 'failed') {
+        throw new Error(`Job ${jobId} failed on backend`);
+      }
+      // status is 'processing' or 'queued' — keep polling
+    } catch (e: any) {
+      if (e.message?.includes('failed on backend')) throw e;
+      console.warn(`Job poll ${i + 1} error:`, e);
+    }
+  }
+  throw new Error(`Job ${jobId} timed out after 2 minutes`);
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const processOutboxQueue = async () => {
   if (isSyncProcessing) {
     console.log('Sync already running. Ignoring duplicate trigger.');
@@ -99,7 +125,7 @@ export const processOutboxQueue = async () => {
     const scansCollection = database.get<PendingScan>('pending_scans');
     const now = Date.now();
 
-    // Zombie Recovery — only reset scans stuck in 'syncing' for 30+ seconds
+    // Zombie Recovery — reset scans stuck in 'syncing' for 30+ seconds
     const thirtySecsAgo = now - 30 * 1000;
     const zombies = await scansCollection.query(
       Q.where('status', 'syncing'),
@@ -124,10 +150,11 @@ export const processOutboxQueue = async () => {
     if (pendingScans.length === 0) return;
 
     for (const scan of pendingScans) {
+      // Mark as syncing with 3-min protection window (covers 2-min poll timeout)
       await database.write(async () => {
         await scan.update(s => {
           s.status = 'syncing';
-          s.nextRetryAt = Date.now() + 60 * 1000; // protect for 60s — zombie check won't touch it
+          s.nextRetryAt = Date.now() + 180 * 1000;
         });
       });
 
@@ -147,13 +174,12 @@ export const processOutboxQueue = async () => {
         });
 
         // Scan limit exceeded — mark as failed, do NOT retry
-        // The app will show an upgrade prompt to the user
         if (response.status === 403) {
-          console.warn(`Scan limit reached for shop ${scan.shopId}. Marking as limit_exceeded.`);
+          console.warn(`Scan limit reached for shop ${scan.shopId}.`);
           await database.write(async () => {
             await scan.update(s => {
               s.status = 'failed';
-              s.retryCount = MAX_RETRIES; // prevents any further retry
+              s.retryCount = MAX_RETRIES;
             });
           });
           continue;
@@ -163,14 +189,21 @@ export const processOutboxQueue = async () => {
 
         const payload = await response.json();
 
-        if (payload.status === 'success') {
-          const quarantinedItems: any[] = payload.data?.quarantined || [];
+        // ── ASYNC JOB HANDLING ────────────────────────────────────────────
+        // Backend returns {status: 'processing', job_id: '...'} for async jobs.
+        // Poll until completed before marking scan as done.
+        let finalPayload = payload;
+        if (payload.status === 'processing' && payload.job_id) {
+          console.log(`Job ${payload.job_id} queued — polling for result...`);
+          finalPayload = await pollJobStatus(payload.job_id, token);
+        }
+        // ─────────────────────────────────────────────────────────────────
+
+        if (finalPayload.status === 'success') {
+          const quarantinedItems: any[] = finalPayload.data?.quarantined || [];
 
           // ── SMART TRIAGE ─────────────────────────────────────────────────
-          // Before writing to inbox, try to auto-match against local dictionary
-          // + user-trained custom items. Only truly unknown items hit the inbox.
           const trulyUnknown: any[] = [];
-
           for (const item of quarantinedItems) {
             const autoMatched = await tryLocalAutoMatch(
               item.raw_text,
@@ -190,7 +223,7 @@ export const processOutboxQueue = async () => {
           }
           // ─────────────────────────────────────────────────────────────────
 
-          // Write quarantine items + destroy scan record (DB only — no file I/O inside)
+          // Write quarantine items + destroy scan record
           await database.write(async () => {
             for (const item of trulyUnknown) {
               await database.get<Quarantine>('quarantine').create(qItem => {
