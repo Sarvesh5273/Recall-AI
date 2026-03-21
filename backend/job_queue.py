@@ -126,7 +126,7 @@ def process_ledger_job(
 ):
     """
     Background job for ledger processing.
-    Heavy lifting: Sarvam OCR → GPT extraction → batch matching → Cosmos writes.
+    Heavy lifting: OCR → GPT extraction → batch matching → Cosmos writes.
     """
     # Import here to avoid circular imports and ensure fresh connections in worker
     from database import db
@@ -150,7 +150,7 @@ def process_ledger_job(
         
         container = db.get_container()
         
-        # ── 1. GOOGLE VISION OCR ─────────────────────────────────────────────
+        # ── 1. OCR ───────────────────────────────────────────────────────────
         store_job_status(ledger_job_id, "processing", "Running OCR...")
 
         import base64 as b64lib
@@ -168,19 +168,20 @@ def process_ledger_job(
             json=vision_payload,
             timeout=30.0
         )
-        logger.info(f"[Job {ledger_job_id}] Google Vision OCR: {time.time()-t_ocr:.2f}s")
 
         if response.status_code != 200:
-            logger.error(f"[Job {ledger_job_id}] Google Vision HTTP {response.status_code}: {response.text[:300]}")
+            logger.error(f"[Job {ledger_job_id}] OCR HTTP {response.status_code}: {response.text[:300]}")
             store_job_result(ledger_job_id, {"status": "error", "error": "OCR failed"})
             store_job_status(ledger_job_id, "failed")
             return
 
         raw_markdown = response.json().get("responses", [{}])[0].get("fullTextAnnotation", {}).get("text", "")
-        if not raw_markdown:
-            logger.warning(f"[Job {ledger_job_id}] Google Vision returned empty text")
+        ocr_lines = len(raw_markdown.split('\n')) if raw_markdown else 0
+        logger.info(f"[Job {ledger_job_id}] OCR complete: extracted {ocr_lines} lines of text in {time.time()-t_ocr:.2f}s")
 
-    
+        if not raw_markdown:
+            logger.warning(f"[Job {ledger_job_id}] OCR returned empty text")
+
         # ── 2. GPT EXTRACTION ────────────────────────────────────────────────
         store_job_status(ledger_job_id, "processing", "Extracting items...")
         
@@ -189,12 +190,14 @@ def process_ledger_job(
             store_job_status(ledger_job_id, "failed")
             return
         
+        logger.info(f"[Job {ledger_job_id}] Azure OpenAI GPT-4o-mini: extracting items from ledger text")
         t_gpt = time.time()
         gpt_response = azure_ai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": """You output only valid JSON containing an 'items' array.
 Each item must have: raw_name (string), quantity (number), unit (string).
+CRITICAL: Lines are written as 'ItemName - quantity unit' or 'ItemName quantity unit'. The dash (-) is always a separator between item name and quantity. Never include the dash or quantity in raw_name. Never extract a quantity-only string like '20 kg' or '50 kg' as an item name.
 Rules for unit normalization — always use these exact unit strings:
 - Weight: use 'kg' for kilograms, 'g' for grams
 - Volume: use 'L' for litres, 'ml' for millilitres  
@@ -210,7 +213,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
             temperature=0.1,
             timeout=45.0,
         )
-        logger.info(f"[Job {ledger_job_id}] GPT-4o-mini: {time.time()-t_gpt:.2f}s")
+        logger.info(f"[Job {ledger_job_id}] Azure OpenAI GPT-4o-mini: extraction complete in {time.time()-t_gpt:.2f}s")
         openai_circuit.record_success()
         
         try:
@@ -248,7 +251,8 @@ If the same item appears multiple times with the same unit, sum the quantities a
         
         results = {"clean_inventory": [], "quarantined": []}
         processed_in_batch: dict = {}
-        
+
+        logger.info(f"[Job {ledger_job_id}] Azure OpenAI GPT-4o-mini: matching {len(structured_items)} items against 150-item kirana catalog")
         sort_results = batch_sort_items(structured_items, shop_id)
         
         # ── 4. PROCESS ITEMS ─────────────────────────────────────────────────
@@ -373,6 +377,7 @@ If the same item appears multiple times with the same unit, sum the quantities a
         for quarantine_item in pending_quarantine_writes:
             container.create_item(body=quarantine_item)
 
+        logger.info(f"[Job {ledger_job_id}] Azure Cosmos DB: writing {len(pending_inventory_upserts)} inventory records")
         for inventory_doc in pending_inventory_upserts.values():
             container.upsert_item(body=inventory_doc)
         
