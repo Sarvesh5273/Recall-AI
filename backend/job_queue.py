@@ -130,7 +130,8 @@ def process_ledger_job(
     """
     # Import here to avoid circular imports and ensure fresh connections in worker
     from database import db
-    from circuit_breaker import sarvam_circuit, openai_circuit
+    from circuit_breaker import openai_circuit
+
     from openai import AzureOpenAI
     
     store_job_status(ledger_job_id, "processing", "Starting OCR...")
@@ -139,10 +140,6 @@ def process_ledger_job(
     try:
         # Decode image bytes
         image_bytes = base64.b64decode(image_bytes_b64)
-        
-        # Load environment in worker context
-        SARVAM_API_URL = "https://api.sarvam.ai/vision"
-        SARVAM_HEADERS = {"api-subscription-key": os.getenv("SARVAM_API_KEY")}
         
         azure_ai_client = AzureOpenAI(
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
